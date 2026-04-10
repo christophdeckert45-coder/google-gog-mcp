@@ -80,7 +80,6 @@ function buildDriveQuery(input: GoogleDriveSearchInput) {
 
   return parts.join(" and ");
 }
-
 export async function searchDriveFiles(config: GoogleGogConfig, input: GoogleDriveSearchInput) {
   const url = new URL("https://www.googleapis.com/drive/v3/files");
   url.searchParams.set("q", buildDriveQuery(input));
