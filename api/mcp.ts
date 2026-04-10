@@ -28,10 +28,10 @@ function logEnvKeyNames(context: string) {
 }
 
 function getGoogleConfig() {
-  const googleClientId = process.env.GOOGLE_CLIENT_ID ?? "";
-  const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET ?? "";
-  const googleRefreshToken = process.env.GOOGLE_REFRESH_TOKEN ?? "";
-  const googleRedirectUri = process.env.GOOGLE_REDIRECT_URI;
+  const googleClientId = process.env.GOOGLECLIENTID ?? "";
+  const googleClientSecret = process.env.GOOGLECLIENTSECRET ?? "";
+  const googleRefreshToken = process.env.GOOGLEREFRESHTOKEN ?? "";
+  const googleRedirectUri = process.env.GOOGLEREDIRECTURI;
 
   return { googleClientId, googleClientSecret, googleRefreshToken, googleRedirectUri };
 }
@@ -40,7 +40,7 @@ function requireGoogleConfig() {
   const config = getGoogleConfig();
   if (!config.googleClientId || !config.googleClientSecret || !config.googleRefreshToken) {
     throw new Error(
-      "Missing GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, or GOOGLE_REFRESH_TOKEN. Connect Google OAuth using the primary account chris@everyday.inc.",
+      "Missing GOOGLECLIENTID, GOOGLECLIENTSECRET, or GOOGLEREFRESHTOKEN. Connect Google OAuth using the primary account chris@everyday.inc.",
     );
   }
   return config;
