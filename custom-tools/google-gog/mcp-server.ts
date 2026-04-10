@@ -114,16 +114,16 @@ const toolInputSchemas: Record<ToolName, Record<string, unknown>> = {
 
 if (import.meta.main) {
   const config = {
-    googleClientId: process.env.GOOGLE_CLIENT_ID ?? "",
-    googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
-    googleRefreshToken: process.env.GOOGLE_REFRESH_TOKEN ?? "",
-    googleRedirectUri: process.env.GOOGLE_REDIRECT_URI,
+    googleClientId: process.env.GOOGLECLIENTID ?? "",
+    googleClientSecret: process.env.GOOGLECLIENTSECRET ?? "",
+    googleRefreshToken: process.env.GOOGLEREFRESHTOKEN ?? "",
+    googleRedirectUri: process.env.GOOGLEREDIRECTURI,
     serverName: process.env.MCP_SERVER_NAME,
     serverVersion: process.env.MCP_SERVER_VERSION,
   } satisfies GoogleGogServerConfig;
 
   if (!config.googleClientId || !config.googleClientSecret || !config.googleRefreshToken) {
-    throw new Error("Missing GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, or GOOGLE_REFRESH_TOKEN. Use primary account chris@everyday.inc.");
+    throw new Error("Missing GOOGLECLIENTID, GOOGLECLIENTSECRET, or GOOGLEREFRESHTOKEN. Use primary account chris@everyday.inc.");
   }
 
   await runGoogleGogServer(config);
