@@ -70,12 +70,12 @@ function buildDriveQuery(input: GoogleDriveSearchInput) {
 
   if (trimmedQuery) {
     const queryValue = escapeDriveQueryValue(trimmedQuery);
-    parts.push("fullText contains "" + queryValue + """);
+    parts.push("fullText contains '" + queryValue + "'");
   }
 
   if (input.includeTrashed === false) parts.push("trashed = false");
   if (input.mimeTypes?.length) {
-    parts.push("(" + input.mimeTypes.map((m) => "mimeType="" + escapeDriveQueryValue(m) + """).join(" or ") + ")");
+    parts.push("(" + input.mimeTypes.map((m) => "mimeType='" + escapeDriveQueryValue(m) + "'").join(" or ") + ")");
   }
 
   return parts.join(" and ");
