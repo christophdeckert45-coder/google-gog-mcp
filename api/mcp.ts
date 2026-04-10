@@ -22,6 +22,11 @@ function json(res: ServerResponse, statusCode: number, body: unknown) {
   res.end(JSON.stringify(body));
 }
 
+function logEnvKeyNames(context: string) {
+  const keys = Object.keys(process.env).sort();
+  console.log(`[google-gog] ${context} env keys:`, keys);
+}
+
 function getGoogleConfig() {
   const googleClientId = process.env.GOOGLE_CLIENT_ID ?? "";
   const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET ?? "";
@@ -115,6 +120,7 @@ function toolSchemas() {
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   try {
+    logEnvKeyNames(`${req.method ?? "GET"} ${req.url ?? "/api/mcp"}`);
     if ((req.method ?? "GET").toUpperCase() === "GET") {
       json(res, 200, {
         name: "google-gog",
