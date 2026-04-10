@@ -60,13 +60,30 @@ async function googleApiFetch(config: GoogleGogConfig, url: string, init?: Reque
   });
 }
 
-export async function searchDriveFiles(config: GoogleGogConfig, input: GoogleDriveSearchInput) {
-  const qParts = [input.query];
-  if (input.includeTrashed === false) qParts.push("trashed = false");
-  if (input.mimeTypes?.length) qParts.push(`(${input.mimeTypes.map((m) => `mimeType='${m}'`).join(" or ")})`);
+function escapeDriveQueryValue(value: string) {
+  return value.replace(/\/g, "\\").replace(/'/g, "\'");
+}
 
+function buildDriveQuery(input: GoogleDriveSearchInput) {
+  const parts: string[] = [];
+  const trimmedQuery = input.query.trim();
+
+  if (trimmedQuery) {
+    const queryValue = escapeDriveQueryValue(trimmedQuery);
+    parts.push("fullText contains "" + queryValue + """);
+  }
+
+  if (input.includeTrashed === false) parts.push("trashed = false");
+  if (input.mimeTypes?.length) {
+    parts.push("(" + input.mimeTypes.map((m) => "mimeType="" + escapeDriveQueryValue(m) + """).join(" or ") + ")");
+  }
+
+  return parts.join(" and ");
+}
+
+export async function searchDriveFiles(config: GoogleGogConfig, input: GoogleDriveSearchInput) {
   const url = new URL("https://www.googleapis.com/drive/v3/files");
-  url.searchParams.set("q", qParts.filter(Boolean).join(" and "));
+  url.searchParams.set("q", buildDriveQuery(input));
   url.searchParams.set("pageSize", String(input.pageSize ?? 10));
   url.searchParams.set("fields", "files(id,name,mimeType,modifiedTime,webViewLink,owners(displayName,emailAddress))");
   if (input.driveId) url.searchParams.set("driveId", input.driveId);
@@ -74,7 +91,7 @@ export async function searchDriveFiles(config: GoogleGogConfig, input: GoogleDri
   url.searchParams.set("includeItemsFromAllDrives", "true");
 
   const res = await googleApiFetch(config, url.toString());
-  if (!res.ok) throw new Error(`Drive search failed: ${res.status} ${res.statusText}`);
+  if (!res.ok) throw new Error("Drive search failed: " + res.status + " " + res.statusText);
   return res.json();
 }
 
