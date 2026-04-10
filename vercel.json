@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "functions": {
+    "api/mcp.ts": {
+      "runtime": "nodejs22.x"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/mcp",
+      "destination": "/api/mcp"
+    }
+  ]
+}
