@@ -61,7 +61,7 @@ async function googleApiFetch(config: GoogleGogConfig, url: string, init?: Reque
 }
 
 function escapeDriveQueryValue(value: string) {
-  return value.replace(/\/g, "\\").replace(/'/g, "\'");
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
 function buildDriveQuery(input: GoogleDriveSearchInput) {
