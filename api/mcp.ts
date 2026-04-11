@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "http";
 import {
   getSheetMetadata,
   gogToolManifest,
+  getGoogleAccountsFromEnv,
   readGoogleDoc,
   readSheetRange,
   searchDriveFiles,
@@ -22,28 +23,14 @@ function json(res: ServerResponse, statusCode: number, body: unknown) {
   res.end(JSON.stringify(body));
 }
 
-function logEnvKeyNames(context: string) {
-  const keys = Object.keys(process.env).sort();
-  console.log(`[google-gog] ${context} env keys:`, keys);
-}
-
-function getGoogleConfig() {
-  const googleClientId = process.env.GOOGLECLIENTID ?? "";
-  const googleClientSecret = process.env.GOOGLECLIENTSECRET ?? "";
-  const googleRefreshToken = process.env.GOOGLEREFRESHTOKEN ?? "";
-  const googleRedirectUri = process.env.GOOGLEREDIRECTURI;
-
-  return { googleClientId, googleClientSecret, googleRefreshToken, googleRedirectUri };
-}
-
-function requireGoogleConfig() {
-  const config = getGoogleConfig();
-  if (!config.googleClientId || !config.googleClientSecret || !config.googleRefreshToken) {
+function requireGoogleAccounts() {
+  const accounts = getGoogleAccountsFromEnv();
+  if (!accounts.length) {
     throw new Error(
-      "Missing GOOGLECLIENTID, GOOGLECLIENTSECRET, or GOOGLEREFRESHTOKEN. Connect Google OAuth using the primary account chris@everyday.inc.",
+      "Missing Google OAuth credentials. Connect at least one account using the original GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET/GOOGLE_REFRESH_TOKEN trio or the PRO GOOGLECLIENTIDPRO/GOOGLECLIENTSECRETPRO/GOOGLEREFRESHTOKENPRO trio.",
     );
   }
-  return config;
+  return accounts;
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
@@ -120,7 +107,6 @@ function toolSchemas() {
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   try {
-    logEnvKeyNames(`${req.method ?? "GET"} ${req.url ?? "/api/mcp"}`);
     if ((req.method ?? "GET").toUpperCase() === "GET") {
       json(res, 200, {
         name: "google-gog",
@@ -177,7 +163,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         case "tools/call": {
           const name = String(request.params?.name ?? "");
           const args = (request.params?.arguments ?? {}) as Record<string, unknown>;
-          const config = requireGoogleConfig();
+          const config = requireGoogleAccounts();
 
           switch (name) {
             case "google_drive_search_files": {
