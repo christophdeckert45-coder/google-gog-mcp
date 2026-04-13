@@ -87,7 +87,7 @@ export GOOGLE_CLIENT_SECRET="your-client-secret"
 
 ```bash
 npm install
-npm run build
+npm run build:mcp
 ```
 
 ### 4. First Run (Authentication)

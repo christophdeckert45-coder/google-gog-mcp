@@ -8,7 +8,7 @@
     "poke-google-workspace-mcp": "dist/server.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.mcp.json",
+    "build:mcp": "tsc -p tsconfig.mcp.json",
     "start": "node dist/server.js",
     "start:http": "node dist/server.js --http",
     "dev": "tsx src/server.ts",
