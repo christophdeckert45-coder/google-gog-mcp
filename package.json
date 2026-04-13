@@ -2,8 +2,37 @@
   "name": "google-gog-mcp",
   "private": true,
   "version": "1.0.0",
+  "description": "MCP server bridging Google Drive/Docs/Sheets read access for Poke",
+  "type": "module",
+  "main": "dist/server.js",
+  "bin": {
+    "poke-google-workspace-mcp": "dist/server.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "start:http": "node dist/server.js --http",
+    "dev": "tsx src/server.ts",
+    "dev:http": "tsx src/server.ts --http",
+    "typecheck": "tsc --noEmit",
+    "validate": "tsx src/validate.ts",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": ["mcp", "google-workspace", "google-drive", "poke", "ai"],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "googleapis": "^171.4.0",
+    "open": "^11.0.0",
+    "zod": "^4.3.6"
+  },
   "devDependencies": {
     "@types/node": "^22.14.1",
+    "tsx": "^4.21.0",
     "typescript": "^5.8.3"
   }
 }
