@@ -8,14 +8,14 @@
     "poke-google-workspace-mcp": "dist/server.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.mcp.json",
     "start": "node dist/server.js",
     "start:http": "node dist/server.js --http",
     "dev": "tsx src/server.ts",
     "dev:http": "tsx src/server.ts --http",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -p tsconfig.mcp.json --noEmit",
     "validate": "tsx src/validate.ts",
-    "lint": "tsc --noEmit"
+    "lint": "tsc -p tsconfig.mcp.json --noEmit"
   },
   "keywords": ["mcp", "google-workspace", "google-drive", "poke", "ai"],
   "author": "",
