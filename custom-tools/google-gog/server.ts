@@ -212,8 +212,8 @@ export async function searchDriveFiles(accounts: GoogleAccount[], input: SearchD
   return { query: input.query, accounts: accounts.map((account) => ({ label: account.label, email: account.email })), results };
 }
 
-async function textFromPdfBytes(buffer: Buffer): Promise<string> {
-  const zlib = await import("node:zlib");
+function textFromPdfBytes(buffer: Buffer): string {
+  const zlib = require("zlib") as typeof import("zlib");
   const raw = buffer.toString("latin1");
   const pieces: string[] = [];
   const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
@@ -247,7 +247,7 @@ export async function readGoogleDoc(accounts: GoogleAccount[], fileId: string) {
   }
   if (mimeType === "application/pdf") {
     const bytes = await downloadFileBytes(account, fileId);
-    return { fileId, name, mimeType, account: { label: account.label, email: account.email }, source: "drive.download:pdf", content: await textFromPdfBytes(bytes) };
+    return { fileId, name, mimeType, account: { label: account.label, email: account.email }, source: "drive.download:pdf", content: textFromPdfBytes(bytes) };
   }
 
   const bytes = await downloadFileBytes(account, fileId);

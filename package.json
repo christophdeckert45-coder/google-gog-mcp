@@ -3,7 +3,6 @@
   "private": true,
   "version": "1.0.0",
   "description": "MCP server bridging Google Drive/Docs/Sheets read access for Poke",
-  "type": "module",
   "main": "dist/server.js",
   "bin": {
     "poke-google-workspace-mcp": "dist/server.js"
