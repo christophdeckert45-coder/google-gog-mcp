@@ -5,6 +5,7 @@ declare const Buffer: any;
 type IncomingMessage = any;
 type ServerResponse = any;
 
+// Google bridge: only pro and personal accounts are valid.
 import {
   getSheetMetadata,
   gogToolManifest,
