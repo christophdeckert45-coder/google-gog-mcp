@@ -68,8 +68,6 @@ function buildAccount(
 }
 
 export function getGoogleAccountsFromEnv(): GoogleAccount[] {
-  const accounts: GoogleAccount[] = [];
-
   const proAccount = buildAccount(
     'pro',
     ['GOOGLECLIENTID_PRO', 'GOOGLE_CLIENT_ID_PRO'],
@@ -77,7 +75,6 @@ export function getGoogleAccountsFromEnv(): GoogleAccount[] {
     ['GOOGLEREFRESHTOKEN_PRO', 'GOOGLE_REFRESH_TOKEN_PRO'],
     ['GOOGLEEMAILPRO', 'GOOGLE_EMAIL_PRO'],
   );
-  if (proAccount) accounts.push(proAccount);
 
   const personalAccount = buildAccount(
     'personal',
@@ -86,7 +83,6 @@ export function getGoogleAccountsFromEnv(): GoogleAccount[] {
     ['GOOGLEREFRESHTOKEN_PERSONAL', 'GOOGLE_REFRESH_TOKEN_PERSONAL'],
     ['GOOGLEEMAILPERSONAL', 'GOOGLE_EMAIL_PERSONAL', 'GOOGLE_EMAIL'],
   );
-  if (personalAccount) accounts.push(personalAccount);
 
   const defaultAccount = buildAccount(
     'default',
@@ -94,19 +90,19 @@ export function getGoogleAccountsFromEnv(): GoogleAccount[] {
     ['GOOGLECLIENTSECRET', 'GOOGLE_CLIENT_SECRET'],
     ['GOOGLEREFRESHTOKEN', 'GOOGLE_REFRESH_TOKEN'],
   );
-  if (defaultAccount) accounts.push(defaultAccount);
 
-  return accounts;
+  const explicitAccounts = [proAccount, personalAccount].filter((account): account is GoogleAccount => Boolean(account));
+  if (explicitAccounts.length) return explicitAccounts;
+  return defaultAccount ? [defaultAccount] : [];
 }
 
 function cacheKey(account: GoogleAccount): string {
   return `${account.label}:${account.email ?? account.clientId.slice(0, 8)}`;
 }
 
-function prioritizeAccounts(accounts: GoogleAccount[]): GoogleAccount[] {
-  const explicit = accounts.filter((account) => account.label !== 'default');
-  const defaults = accounts.filter((account) => account.label === 'default');
-  return explicit.length ? [...explicit, ...defaults] : defaults;
+function explicitAccountsOnly(accounts: GoogleAccount[]): GoogleAccount[] {
+  const explicit = accounts.filter((account) => account.label === 'pro' || account.label === 'personal');
+  return explicit.length ? explicit : accounts.filter((account) => account.label === 'default');
 }
 
 async function getAccessToken(account: GoogleAccount): Promise<string> {
@@ -185,7 +181,7 @@ export async function searchDriveFiles(accounts: GoogleAccount[], input: SearchD
   const seen = new Set<string>();
   const results: Array<Record<string, unknown>> = [];
 
-  for (const account of prioritizeAccounts(accounts)) {
+  for (const account of explicitAccountsOnly(accounts)) {
     const params = new URLSearchParams({
       q: query,
       pageSize: String(pageSize),
@@ -208,7 +204,7 @@ export async function searchDriveFiles(accounts: GoogleAccount[], input: SearchD
     }
   }
 
-  return { query: input.query, accounts: prioritizeAccounts(accounts).map((account) => ({ label: account.label, email: account.email })), results };
+  return { query: input.query, accounts: explicitAccountsOnly(accounts).map((account) => ({ label: account.label, email: account.email })), results };
 }
 
 function textFromPdfBytes(buffer: any): string {
@@ -234,7 +230,7 @@ function textFromPdfBytes(buffer: any): string {
 }
 
 export async function readGoogleDoc(accounts: GoogleAccount[], fileId: string) {
-  const ordered = prioritizeAccounts(accounts);
+  const ordered = explicitAccountsOnly(accounts);
   let lastError: unknown;
 
   for (const account of ordered) {
@@ -259,7 +255,7 @@ export async function readGoogleDoc(accounts: GoogleAccount[], fileId: string) {
 }
 
 export async function getSheetMetadata(accounts: GoogleAccount[], spreadsheetId: string) {
-  const ordered = prioritizeAccounts(accounts);
+  const ordered = explicitAccountsOnly(accounts);
   let lastError: unknown;
 
   for (const account of ordered) {
@@ -284,7 +280,7 @@ export async function getSheetMetadata(accounts: GoogleAccount[], spreadsheetId:
 }
 
 export async function readSheetRange(accounts: GoogleAccount[], spreadsheetId: string, range: string, valueRenderOption: 'FORMATTED_VALUE' | 'UNFORMATTED_VALUE' | 'FORMULA' = 'FORMATTED_VALUE') {
-  const ordered = prioritizeAccounts(accounts);
+  const ordered = explicitAccountsOnly(accounts);
   let lastError: unknown;
 
   for (const account of ordered) {
@@ -309,7 +305,7 @@ export async function readSheetRange(accounts: GoogleAccount[], spreadsheetId: s
 }
 
 export async function writeSheetRange(accounts: GoogleAccount[], spreadsheetId: string, range: string, values: unknown[][], valueInputOption: 'RAW' | 'USER_ENTERED' = 'USER_ENTERED') {
-  const account = prioritizeAccounts(accounts)[0];
+  const account = explicitAccountsOnly(accounts)[0];
   if (!account) throw new Error('Unauthorized');
 
   const response = await googleFetch(
