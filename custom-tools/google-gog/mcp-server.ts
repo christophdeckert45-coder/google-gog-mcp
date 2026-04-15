@@ -5,6 +5,7 @@ import {
   gogToolManifest,
   readGoogleDoc,
   readSheetRange,
+  writeSheetRange,
   searchDriveFiles,
   type GoogleGogConfig,
 } from "./server.js";
@@ -37,25 +38,47 @@ export function createGoogleGogServer(config: GoogleGogServerConfig) {
     const { name, arguments: args } = request.params as { name: ToolName; arguments?: Record<string, unknown> };
 
     switch (name) {
-      case "google_drive_search_files":
+      case "google_drive_search_files": {
+        const account = args?.account === "personal" ? "personal" : "pro";
         return textResult(await searchDriveFiles(config, {
           query: String(args?.query ?? ""),
           pageSize: args?.pageSize ? Number(args.pageSize) : undefined,
           driveId: typeof args?.driveId === "string" ? args.driveId : undefined,
           mimeTypes: Array.isArray(args?.mimeTypes) ? args.mimeTypes.map(String) : undefined,
           includeTrashed: Boolean(args?.includeTrashed),
+          account,
         }));
-      case "google_docs_read":
-        return textResult(await readGoogleDoc(config, String(args?.documentId ?? "")));
-      case "google_sheets_get_metadata":
-        return textResult(await getSheetMetadata(config, String(args?.spreadsheetId ?? "")));
+      }
+      case "google_docs_read": {
+        const account = args?.account === "personal" ? "personal" : "pro";
+        return textResult(await readGoogleDoc(config, String(args?.documentId ?? ""), account));
+      }
+      case "google_sheets_get_metadata": {
+        const account = args?.account === "personal" ? "personal" : "pro";
+        return textResult(await getSheetMetadata(config, String(args?.spreadsheetId ?? ""), account));
+      }
       case "google_sheets_read_range": {
         const valueRenderOption =
           args?.valueRenderOption === "UNFORMATTED_VALUE" || args?.valueRenderOption === "FORMULA"
             ? (args.valueRenderOption as "FORMATTED_VALUE" | "UNFORMATTED_VALUE" | "FORMULA")
             : "FORMATTED_VALUE";
+        const account = args?.account === "personal" ? "personal" : "pro";
         return textResult(
-          await readSheetRange(config, String(args?.spreadsheetId ?? ""), String(args?.range ?? ""), valueRenderOption),
+          await readSheetRange(config, String(args?.spreadsheetId ?? ""), String(args?.range ?? ""), valueRenderOption, account),
+        );
+      }
+      case "google_sheets_write_range": {
+        const valueInputOption = args?.valueInputOption === "RAW" ? "RAW" : "USER_ENTERED";
+        const account = args?.account === "personal" ? "personal" : "pro";
+        return textResult(
+          await writeSheetRange(
+            config,
+            String(args?.spreadsheetId ?? ""),
+            String(args?.range ?? ""),
+            Array.isArray(args?.values) ? (args.values as unknown[][]) : [],
+            valueInputOption,
+            account,
+          ),
         );
       }
       default:
@@ -84,19 +107,20 @@ const toolInputSchemas: Record<ToolName, Record<string, unknown>> = {
       driveId: { type: "string" },
       mimeTypes: { type: "array", items: { type: "string" } },
       includeTrashed: { type: "boolean" },
+      account: { type: "string", enum: ["pro", "personal"] },
     },
     required: ["query"],
     additionalProperties: false,
   },
   google_docs_read: {
     type: "object",
-    properties: { documentId: { type: "string" } },
+    properties: { documentId: { type: "string" }, account: { type: "string", enum: ["pro", "personal"] } },
     required: ["documentId"],
     additionalProperties: false,
   },
   google_sheets_get_metadata: {
     type: "object",
-    properties: { spreadsheetId: { type: "string" } },
+    properties: { spreadsheetId: { type: "string" }, account: { type: "string", enum: ["pro", "personal"] } },
     required: ["spreadsheetId"],
     additionalProperties: false,
   },
@@ -106,8 +130,21 @@ const toolInputSchemas: Record<ToolName, Record<string, unknown>> = {
       spreadsheetId: { type: "string" },
       range: { type: "string" },
       valueRenderOption: { type: "string", enum: ["FORMATTED_VALUE", "UNFORMATTED_VALUE", "FORMULA"] },
+      account: { type: "string", enum: ["pro", "personal"] },
     },
     required: ["spreadsheetId", "range"],
+    additionalProperties: false,
+  },
+  google_sheets_write_range: {
+    type: "object",
+    properties: {
+      spreadsheetId: { type: "string" },
+      range: { type: "string" },
+      values: { type: "array", items: { type: "array" } },
+      valueInputOption: { type: "string", enum: ["RAW", "USER_ENTERED"] },
+      account: { type: "string", enum: ["pro", "personal"] },
+    },
+    required: ["spreadsheetId", "range", "values"],
     additionalProperties: false,
   },
 };

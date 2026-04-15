@@ -10,6 +10,10 @@ type GoogleAccount = {
   refreshToken: string;
 };
 
+function normalizeAccountLabel(label: unknown): 'pro' | 'personal' {
+  return label === 'personal' ? 'personal' : 'pro';
+}
+
 type AccountLabel = 'pro' | 'personal';
 
 type SearchDriveFilesInput = {
@@ -93,12 +97,13 @@ export function getGoogleAccountsFromEnv(): GoogleAccount[] {
 }
 
 function cacheKey(account: GoogleAccount): string {
-  return `${account.label}:${account.email ?? account.clientId.slice(0, 8)}`;
+  const label = normalizeAccountLabel(account.label);
+  return `${label}:${account.email ?? account.clientId.slice(0, 8)}`;
 }
 
 function orderedAccounts(accounts: GoogleAccount[]): GoogleAccount[] {
-  const pro = accounts.filter((account) => account.label === 'pro');
-  const personal = accounts.filter((account) => account.label === 'personal');
+  const pro = accounts.filter((account) => normalizeAccountLabel(account.label) === 'pro');
+  const personal = accounts.filter((account) => normalizeAccountLabel(account.label) === 'personal');
   return [...pro, ...personal];
 }
 
@@ -109,6 +114,7 @@ function normalizeDriveResourceId(input: string): string {
 }
 
 async function getAccessToken(account: GoogleAccount): Promise<string> {
+  const safeLabel = normalizeAccountLabel(account.label);
   const cached = tokenCache.get(cacheKey(account));
   if (cached && cached.expiresAt - Date.now() > 30_000) return cached.accessToken;
 
@@ -132,7 +138,7 @@ async function getAccessToken(account: GoogleAccount): Promise<string> {
 
   if (!response.ok || !payload.access_token) {
     throw new Error(
-      `Failed to refresh Google access token for ${account.label}${account.email ? ` (${account.email})` : ''}: ${payload.error_description ?? payload.error ?? response.statusText}`,
+      `Failed to refresh Google access token for ${safeLabel}${account.email ? ` (${account.email})` : ''}: ${payload.error_description ?? payload.error ?? response.statusText}`,
     );
   }
 
@@ -175,14 +181,14 @@ function buildDriveQuery(query: string, mimeTypes?: string[], includeTrashed = f
 }
 
 function normalizeDriveResult(account: GoogleAccount, item: Record<string, unknown>) {
-  return { ...item, account: { label: account.label, email: account.email } };
+  return { ...item, account: { label: normalizeAccountLabel(account.label), email: account.email } };
 }
 
 function accessCandidates(accounts: GoogleAccount[], preferred?: AccountLabel): GoogleAccount[] {
   const candidates = orderedAccounts(accounts);
   if (!preferred) return candidates;
-  const preferredAccount = candidates.filter((account) => account.label === preferred);
-  const fallbackAccount = candidates.filter((account) => account.label !== preferred);
+  const preferredAccount = candidates.filter((account) => normalizeAccountLabel(account.label) === preferred);
+  const fallbackAccount = candidates.filter((account) => normalizeAccountLabel(account.label) !== preferred);
   return [...preferredAccount, ...fallbackAccount];
 }
 
@@ -220,7 +226,7 @@ export async function searchDriveFiles(accounts: GoogleAccount[], input: SearchD
 }
 
 function helpfulTokenError(accounts: GoogleAccount[]): Error {
-  const labels = accounts.map((account) => account.label).join(' then ');
+  const labels = accounts.map((account) => normalizeAccountLabel(account.label)).join(' then ');
   return new Error(`Unable to refresh Google access token for configured accounts (${labels || 'none'}). Check the Google client ID, client secret, and refresh token for the pro and personal accounts.`);
 }
 
@@ -235,7 +241,7 @@ export async function readGoogleDoc(accounts: GoogleAccount[], fileIdOrUrl: stri
       if (!response.ok) {
         const body = await response.text().catch(() => '');
         if (response.status === 401 || response.status === 403) {
-          lastError = new Error(`Google API unauthorized for ${account.label} account: ${body || response.statusText}`);
+          lastError = new Error(`Google API unauthorized for ${normalizeAccountLabel(account.label)} account: ${body || response.statusText}`);
           continue;
         }
         throw new Error(`Google API error ${response.status}: ${body || response.statusText}`);

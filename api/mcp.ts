@@ -53,6 +53,10 @@ function accountProperty() {
   return { type: 'string', enum: ['pro', 'personal'] };
 }
 
+function normalizeRequestedAccount(account: unknown): 'pro' | 'personal' {
+  return account === 'personal' ? 'personal' : 'pro';
+}
+
 function toolSchemas() {
   return (gogToolManifest as any).map((tool: any) => {
     switch (tool.name) {
@@ -206,16 +210,16 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
                 driveId: typeof (args as any).driveId === 'string' ? (args as any).driveId : undefined,
                 mimeTypes: Array.isArray((args as any).mimeTypes) ? ((args as any).mimeTypes as any[]).map(String) : undefined,
                 includeTrashed: Boolean((args as any).includeTrashed),
-                account: (args as any).account === 'personal' ? 'personal' : 'pro',
+                account: normalizeRequestedAccount((args as any).account),
               });
               return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } };
             }
             case 'google_docs_read': {
-              const result = await readGoogleDoc(config, String((args as any).documentId ?? ''), (args as any).account === 'personal' ? 'personal' : 'pro');
+              const result = await readGoogleDoc(config, String((args as any).documentId ?? ''), normalizeRequestedAccount((args as any).account));
               return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } };
             }
             case 'google_sheets_get_metadata': {
-              const result = await getSheetMetadata(config, String((args as any).spreadsheetId ?? ''), (args as any).account === 'personal' ? 'personal' : 'pro');
+              const result = await getSheetMetadata(config, String((args as any).spreadsheetId ?? ''), normalizeRequestedAccount((args as any).account));
               return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } };
             }
             case 'google_sheets_read_range': {
@@ -228,7 +232,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
                 String((args as any).spreadsheetId ?? ''),
                 String((args as any).range ?? ''),
                 valueRenderOption,
-                (args as any).account === 'personal' ? 'personal' : 'pro',
+                normalizeRequestedAccount((args as any).account),
               );
               return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } };
             }
@@ -241,7 +245,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
                 String((args as any).range ?? ''),
                 values,
                 valueInputOption,
-                (args as any).account === 'personal' ? 'personal' : 'pro',
+                normalizeRequestedAccount((args as any).account),
               );
               return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } };
             }
