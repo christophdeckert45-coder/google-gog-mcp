@@ -3,7 +3,7 @@ declare const Buffer: any;
 declare const require: any;
 
 type GoogleAccount = {
-  label: 'default' | 'pro' | 'personal';
+  label: 'pro' | 'personal';
   email?: string;
   clientId: string;
   clientSecret: string;
@@ -28,6 +28,7 @@ export const gogToolManifest: ToolManifestEntry[] = [
   { name: 'google_docs_read', description: 'Read Google Docs, Sheets, and PDFs via Drive export/download using the appropriate account token.' },
   { name: 'google_sheets_get_metadata', description: 'Fetch Google Sheets metadata.' },
   { name: 'google_sheets_read_range', description: 'Read a Google Sheets range by exporting the sheet as CSV and slicing the requested cells.' },
+  { name: 'google_sheets_write_range', description: 'Write values to a Google Sheets range.' },
 ] as const;
 
 const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
@@ -84,25 +85,17 @@ export function getGoogleAccountsFromEnv(): GoogleAccount[] {
     ['GOOGLEEMAILPERSONAL', 'GOOGLE_EMAIL_PERSONAL', 'GOOGLE_EMAIL'],
   );
 
-  const defaultAccount = buildAccount(
-    'default',
-    ['GOOGLECLIENTID', 'GOOGLE_CLIENT_ID'],
-    ['GOOGLECLIENTSECRET', 'GOOGLE_CLIENT_SECRET'],
-    ['GOOGLEREFRESHTOKEN', 'GOOGLE_REFRESH_TOKEN'],
-  );
-
-  const explicitAccounts = [proAccount, personalAccount].filter((account): account is GoogleAccount => Boolean(account));
-  if (explicitAccounts.length) return explicitAccounts;
-  return defaultAccount ? [defaultAccount] : [];
+  return [proAccount, personalAccount].filter((account): account is GoogleAccount => Boolean(account));
 }
 
 function cacheKey(account: GoogleAccount): string {
   return `${account.label}:${account.email ?? account.clientId.slice(0, 8)}`;
 }
 
-function explicitAccountsOnly(accounts: GoogleAccount[]): GoogleAccount[] {
-  const explicit = accounts.filter((account) => account.label === 'pro' || account.label === 'personal');
-  return explicit.length ? explicit : accounts.filter((account) => account.label === 'default');
+function orderedAccounts(accounts: GoogleAccount[]): GoogleAccount[] {
+  const pro = accounts.filter((account) => account.label === 'pro');
+  const personal = accounts.filter((account) => account.label === 'personal');
+  return [...pro, ...personal];
 }
 
 async function getAccessToken(account: GoogleAccount): Promise<string> {
@@ -175,13 +168,20 @@ function normalizeDriveResult(account: GoogleAccount, item: Record<string, unkno
   return { ...item, account: { label: account.label, email: account.email } };
 }
 
+function accessCandidates(accounts: GoogleAccount[]): GoogleAccount[] {
+  const candidates = orderedAccounts(accounts);
+  if (candidates.length) return candidates;
+  return [];
+}
+
 export async function searchDriveFiles(accounts: GoogleAccount[], input: SearchDriveFilesInput) {
   const query = buildDriveQuery(input.query, input.mimeTypes, input.includeTrashed);
   const pageSize = Math.max(1, Math.min(100, input.pageSize ?? 25));
   const seen = new Set<string>();
   const results: Array<Record<string, unknown>> = [];
+  const candidates = accessCandidates(accounts);
 
-  for (const account of explicitAccountsOnly(accounts)) {
+  for (const account of candidates) {
     const params = new URLSearchParams({
       q: query,
       pageSize: String(pageSize),
@@ -204,36 +204,19 @@ export async function searchDriveFiles(accounts: GoogleAccount[], input: SearchD
     }
   }
 
-  return { query: input.query, accounts: explicitAccountsOnly(accounts).map((account) => ({ label: account.label, email: account.email })), results };
+  return { query: input.query, accounts: candidates.map((account) => ({ label: account.label, email: account.email })), results };
 }
 
-function textFromPdfBytes(buffer: any): string {
-  const zlib: any = require('zlib');
-  const raw = buffer.toString('latin1');
-  const pieces: string[] = [];
-  const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
-  let match: RegExpExecArray | null;
-  while ((match = streamRegex.exec(raw))) {
-    const streamBuffer = Buffer.from(match[1], 'latin1');
-    const candidates: any[] = [streamBuffer];
-    try { candidates.push(zlib.inflateSync(streamBuffer)); } catch {}
-    try { candidates.push(zlib.inflateRawSync(streamBuffer)); } catch {}
-    for (const candidate of candidates) {
-      const content = candidate.toString('latin1');
-      for (const operator of content.matchAll(/\(([^)]*?)\)\s*Tj/g)) pieces.push(operator[1]);
-      for (const arrayMatch of content.matchAll(/\[(.*?)\]\s*TJ/gms)) {
-        for (const inner of arrayMatch[1].matchAll(/\(([^)]*?)\)/g)) pieces.push(inner[1]);
-      }
-    }
-  }
-  return pieces.join(' ').replace(/\u0000/g, '').trim() || '[PDF content could not be extracted]';
+function helpfulTokenError(accounts: GoogleAccount[]): Error {
+  const labels = accounts.map((account) => account.label).join(' then ');
+  return new Error(`Unable to refresh Google access token for configured accounts (${labels || 'none'}). Check the Google client ID, client secret, and refresh token for the pro and personal accounts.`);
 }
 
 export async function readGoogleDoc(accounts: GoogleAccount[], fileId: string) {
-  const ordered = explicitAccountsOnly(accounts);
+  const candidates = accessCandidates(accounts);
   let lastError: unknown;
 
-  for (const account of ordered) {
+  for (const account of candidates) {
     try {
       const response = await googleFetchRaw(account, `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}?alt=media`, { method: 'GET' });
       if (!response.ok) {
@@ -251,23 +234,19 @@ export async function readGoogleDoc(accounts: GoogleAccount[], fileId: string) {
     }
   }
 
-  throw lastError instanceof Error ? lastError : new Error('Unauthorized');
+  throw lastError instanceof Error ? lastError : helpfulTokenError(candidates);
 }
 
 export async function getSheetMetadata(accounts: GoogleAccount[], spreadsheetId: string) {
-  const ordered = explicitAccountsOnly(accounts);
+  const candidates = accessCandidates(accounts);
   let lastError: unknown;
 
-  for (const account of ordered) {
+  for (const account of candidates) {
     try {
       const response = await googleFetch(account, `/files/${encodeURIComponent(spreadsheetId)}?fields=id,name,mimeType,owners(emailAddress,displayName)`);
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         const body = JSON.stringify(payload);
-        if (response.status === 401 || response.status === 403) {
-          lastError = new Error(`Google API unauthorized for ${account.label} account: ${body || response.statusText}`);
-          continue;
-        }
         throw new Error(`Google API error ${response.status}: ${body || response.statusText}`);
       }
       return { spreadsheetId, account: { label: account.label, email: account.email }, metadata: payload };
@@ -276,22 +255,18 @@ export async function getSheetMetadata(accounts: GoogleAccount[], spreadsheetId:
     }
   }
 
-  throw lastError instanceof Error ? lastError : new Error('Unauthorized');
+  throw lastError instanceof Error ? lastError : helpfulTokenError(candidates);
 }
 
 export async function readSheetRange(accounts: GoogleAccount[], spreadsheetId: string, range: string, valueRenderOption: 'FORMATTED_VALUE' | 'UNFORMATTED_VALUE' | 'FORMULA' = 'FORMATTED_VALUE') {
-  const ordered = explicitAccountsOnly(accounts);
+  const candidates = accessCandidates(accounts);
   let lastError: unknown;
 
-  for (const account of ordered) {
+  for (const account of candidates) {
     try {
       const csvResponse = await googleFetchRaw(account, `${DRIVE_API_BASE}/files/${encodeURIComponent(spreadsheetId)}/export?mimeType=${encodeURIComponent('text/csv')}`, { method: 'GET' });
       if (!csvResponse.ok) {
         const body = await csvResponse.text().catch(() => '');
-        if (csvResponse.status === 401 || csvResponse.status === 403) {
-          lastError = new Error(`Google API unauthorized for ${account.label} account: ${body || csvResponse.statusText}`);
-          continue;
-        }
         throw new Error(`Google API error ${csvResponse.status}: ${body || csvResponse.statusText}`);
       }
       const csv = await csvResponse.text();
@@ -301,12 +276,12 @@ export async function readSheetRange(accounts: GoogleAccount[], spreadsheetId: s
     }
   }
 
-  throw lastError instanceof Error ? lastError : new Error('Unauthorized');
+  throw lastError instanceof Error ? lastError : helpfulTokenError(candidates);
 }
 
 export async function writeSheetRange(accounts: GoogleAccount[], spreadsheetId: string, range: string, values: unknown[][], valueInputOption: 'RAW' | 'USER_ENTERED' = 'USER_ENTERED') {
-  const account = explicitAccountsOnly(accounts)[0];
-  if (!account) throw new Error('Unauthorized');
+  const account = accessCandidates(accounts)[0];
+  if (!account) throw new Error('Unable to access Google Sheets because no pro or personal credentials are configured.');
 
   const response = await googleFetch(
     account,
