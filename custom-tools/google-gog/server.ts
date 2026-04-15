@@ -98,6 +98,12 @@ function orderedAccounts(accounts: GoogleAccount[]): GoogleAccount[] {
   return [...pro, ...personal];
 }
 
+function normalizeDriveResourceId(input: string): string {
+  const trimmed = input.trim();
+  const match = trimmed.match(/\/(?:d|folders)\/([a-zA-Z0-9_-]{10,})/) ?? trimmed.match(/[?&]id=([a-zA-Z0-9_-]{10,})/);
+  return match?.[1] ?? trimmed;
+}
+
 async function getAccessToken(account: GoogleAccount): Promise<string> {
   const cached = tokenCache.get(cacheKey(account));
   if (cached && cached.expiresAt - Date.now() > 30_000) return cached.accessToken;
@@ -212,8 +218,9 @@ function helpfulTokenError(accounts: GoogleAccount[]): Error {
   return new Error(`Unable to refresh Google access token for configured accounts (${labels || 'none'}). Check the Google client ID, client secret, and refresh token for the pro and personal accounts.`);
 }
 
-export async function readGoogleDoc(accounts: GoogleAccount[], fileId: string) {
+export async function readGoogleDoc(accounts: GoogleAccount[], fileIdOrUrl: string) {
   const candidates = accessCandidates(accounts);
+  const fileId = normalizeDriveResourceId(fileIdOrUrl);
   let lastError: unknown;
 
   for (const account of candidates) {
@@ -237,8 +244,9 @@ export async function readGoogleDoc(accounts: GoogleAccount[], fileId: string) {
   throw lastError instanceof Error ? lastError : helpfulTokenError(candidates);
 }
 
-export async function getSheetMetadata(accounts: GoogleAccount[], spreadsheetId: string) {
+export async function getSheetMetadata(accounts: GoogleAccount[], spreadsheetIdOrUrl: string) {
   const candidates = accessCandidates(accounts);
+  const spreadsheetId = normalizeDriveResourceId(spreadsheetIdOrUrl);
   let lastError: unknown;
 
   for (const account of candidates) {
@@ -258,8 +266,9 @@ export async function getSheetMetadata(accounts: GoogleAccount[], spreadsheetId:
   throw lastError instanceof Error ? lastError : helpfulTokenError(candidates);
 }
 
-export async function readSheetRange(accounts: GoogleAccount[], spreadsheetId: string, range: string, valueRenderOption: 'FORMATTED_VALUE' | 'UNFORMATTED_VALUE' | 'FORMULA' = 'FORMATTED_VALUE') {
+export async function readSheetRange(accounts: GoogleAccount[], spreadsheetIdOrUrl: string, range: string, valueRenderOption: 'FORMATTED_VALUE' | 'UNFORMATTED_VALUE' | 'FORMULA' = 'FORMATTED_VALUE') {
   const candidates = accessCandidates(accounts);
+  const spreadsheetId = normalizeDriveResourceId(spreadsheetIdOrUrl);
   let lastError: unknown;
 
   for (const account of candidates) {
@@ -279,8 +288,9 @@ export async function readSheetRange(accounts: GoogleAccount[], spreadsheetId: s
   throw lastError instanceof Error ? lastError : helpfulTokenError(candidates);
 }
 
-export async function writeSheetRange(accounts: GoogleAccount[], spreadsheetId: string, range: string, values: unknown[][], valueInputOption: 'RAW' | 'USER_ENTERED' = 'USER_ENTERED') {
+export async function writeSheetRange(accounts: GoogleAccount[], spreadsheetIdOrUrl: string, range: string, values: unknown[][], valueInputOption: 'RAW' | 'USER_ENTERED' = 'USER_ENTERED') {
   const account = accessCandidates(accounts)[0];
+  const spreadsheetId = normalizeDriveResourceId(spreadsheetIdOrUrl);
   if (!account) throw new Error('Unable to access Google Sheets because no pro or personal credentials are configured.');
 
   const response = await googleFetch(
