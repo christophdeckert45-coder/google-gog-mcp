@@ -50,7 +50,7 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
 }
 
 function accountProperty() {
-  return { type: 'string', enum: ['pro', 'personal'], default: 'pro' };
+  return { type: 'string', enum: ['pro', 'personal'] };
 }
 
 function toolSchemas() {
