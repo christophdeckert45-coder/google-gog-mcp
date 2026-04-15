@@ -10,25 +10,29 @@ type GoogleAccount = {
   refreshToken: string;
 };
 
+type AccountLabel = 'pro' | 'personal';
+
 type SearchDriveFilesInput = {
   query: string;
   pageSize?: number;
   driveId?: string;
   mimeTypes?: string[];
   includeTrashed?: boolean;
+  account?: AccountLabel;
 };
 
 type ToolManifestEntry = {
   name: string;
   description: string;
+  accountRequired?: boolean;
 };
 
 export const gogToolManifest: ToolManifestEntry[] = [
-  { name: 'google_drive_search_files', description: 'Search Google Drive files accessible to the connected Google accounts.' },
-  { name: 'google_docs_read', description: 'Read Google Docs, Sheets, and PDFs via Drive export/download using the appropriate account token.' },
-  { name: 'google_sheets_get_metadata', description: 'Fetch Google Sheets metadata.' },
-  { name: 'google_sheets_read_range', description: 'Read a Google Sheets range by exporting the sheet as CSV and slicing the requested cells.' },
-  { name: 'google_sheets_write_range', description: 'Write values to a Google Sheets range.' },
+  { name: 'google_drive_search_files', description: 'Search Google Drive files accessible to the connected Google accounts.', accountRequired: true },
+  { name: 'google_docs_read', description: 'Read Google Docs, Sheets, and PDFs via Drive export/download using the appropriate account token.', accountRequired: true },
+  { name: 'google_sheets_get_metadata', description: 'Fetch Google Sheets metadata.', accountRequired: true },
+  { name: 'google_sheets_read_range', description: 'Read a Google Sheets range by exporting the sheet as CSV and slicing the requested cells.', accountRequired: true },
+  { name: 'google_sheets_write_range', description: 'Write values to a Google Sheets range.', accountRequired: true },
 ] as const;
 
 const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
@@ -174,10 +178,12 @@ function normalizeDriveResult(account: GoogleAccount, item: Record<string, unkno
   return { ...item, account: { label: account.label, email: account.email } };
 }
 
-function accessCandidates(accounts: GoogleAccount[]): GoogleAccount[] {
+function accessCandidates(accounts: GoogleAccount[], preferred?: AccountLabel): GoogleAccount[] {
   const candidates = orderedAccounts(accounts);
-  if (candidates.length) return candidates;
-  return [];
+  if (!preferred) return candidates;
+  const preferredAccount = candidates.filter((account) => account.label === preferred);
+  const fallbackAccount = candidates.filter((account) => account.label !== preferred);
+  return [...preferredAccount, ...fallbackAccount];
 }
 
 export async function searchDriveFiles(accounts: GoogleAccount[], input: SearchDriveFilesInput) {
@@ -185,7 +191,7 @@ export async function searchDriveFiles(accounts: GoogleAccount[], input: SearchD
   const pageSize = Math.max(1, Math.min(100, input.pageSize ?? 25));
   const seen = new Set<string>();
   const results: Array<Record<string, unknown>> = [];
-  const candidates = accessCandidates(accounts);
+  const candidates = accessCandidates(accounts, input.account);
 
   for (const account of candidates) {
     const params = new URLSearchParams({
@@ -218,8 +224,8 @@ function helpfulTokenError(accounts: GoogleAccount[]): Error {
   return new Error(`Unable to refresh Google access token for configured accounts (${labels || 'none'}). Check the Google client ID, client secret, and refresh token for the pro and personal accounts.`);
 }
 
-export async function readGoogleDoc(accounts: GoogleAccount[], fileIdOrUrl: string) {
-  const candidates = accessCandidates(accounts);
+export async function readGoogleDoc(accounts: GoogleAccount[], fileIdOrUrl: string, account?: AccountLabel) {
+  const candidates = accessCandidates(accounts, account);
   const fileId = normalizeDriveResourceId(fileIdOrUrl);
   let lastError: unknown;
 
@@ -244,8 +250,8 @@ export async function readGoogleDoc(accounts: GoogleAccount[], fileIdOrUrl: stri
   throw lastError instanceof Error ? lastError : helpfulTokenError(candidates);
 }
 
-export async function getSheetMetadata(accounts: GoogleAccount[], spreadsheetIdOrUrl: string) {
-  const candidates = accessCandidates(accounts);
+export async function getSheetMetadata(accounts: GoogleAccount[], spreadsheetIdOrUrl: string, account?: AccountLabel) {
+  const candidates = accessCandidates(accounts, account);
   const spreadsheetId = normalizeDriveResourceId(spreadsheetIdOrUrl);
   let lastError: unknown;
 
@@ -266,8 +272,8 @@ export async function getSheetMetadata(accounts: GoogleAccount[], spreadsheetIdO
   throw lastError instanceof Error ? lastError : helpfulTokenError(candidates);
 }
 
-export async function readSheetRange(accounts: GoogleAccount[], spreadsheetIdOrUrl: string, range: string, valueRenderOption: 'FORMATTED_VALUE' | 'UNFORMATTED_VALUE' | 'FORMULA' = 'FORMATTED_VALUE') {
-  const candidates = accessCandidates(accounts);
+export async function readSheetRange(accounts: GoogleAccount[], spreadsheetIdOrUrl: string, range: string, valueRenderOption: 'FORMATTED_VALUE' | 'UNFORMATTED_VALUE' | 'FORMULA' = 'FORMATTED_VALUE', account?: AccountLabel) {
+  const candidates = accessCandidates(accounts, account);
   const spreadsheetId = normalizeDriveResourceId(spreadsheetIdOrUrl);
   let lastError: unknown;
 
@@ -288,8 +294,8 @@ export async function readSheetRange(accounts: GoogleAccount[], spreadsheetIdOrU
   throw lastError instanceof Error ? lastError : helpfulTokenError(candidates);
 }
 
-export async function writeSheetRange(accounts: GoogleAccount[], spreadsheetIdOrUrl: string, range: string, values: unknown[][], valueInputOption: 'RAW' | 'USER_ENTERED' = 'USER_ENTERED') {
-  const account = accessCandidates(accounts)[0];
+export async function writeSheetRange(accounts: GoogleAccount[], spreadsheetIdOrUrl: string, range: string, values: unknown[][], valueInputOption: 'RAW' | 'USER_ENTERED' = 'USER_ENTERED', preferredAccount?: AccountLabel) {
+  const account = accessCandidates(accounts, preferredAccount)[0];
   const spreadsheetId = normalizeDriveResourceId(spreadsheetIdOrUrl);
   if (!account) throw new Error('Unable to access Google Sheets because no pro or personal credentials are configured.');
 

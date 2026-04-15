@@ -49,6 +49,10 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   return JSON.parse(raw);
 }
 
+function accountProperty() {
+  return { type: 'string', enum: ['pro', 'personal'], default: 'pro' };
+}
+
 function toolSchemas() {
   return (gogToolManifest as any).map((tool: any) => {
     switch (tool.name) {
@@ -64,6 +68,7 @@ function toolSchemas() {
               driveId: { type: 'string' },
               mimeTypes: { type: 'array', items: { type: 'string' } },
               includeTrashed: { type: 'boolean' },
+              account: accountProperty(),
             },
             required: ['query'],
             additionalProperties: false,
@@ -75,7 +80,7 @@ function toolSchemas() {
           description: tool.description,
           inputSchema: {
             type: 'object',
-            properties: { documentId: { type: 'string' } },
+            properties: { documentId: { type: 'string' }, account: accountProperty() },
             required: ['documentId'],
             additionalProperties: false,
           },
@@ -86,7 +91,7 @@ function toolSchemas() {
           description: tool.description,
           inputSchema: {
             type: 'object',
-            properties: { spreadsheetId: { type: 'string' } },
+            properties: { spreadsheetId: { type: 'string' }, account: accountProperty() },
             required: ['spreadsheetId'],
             additionalProperties: false,
           },
@@ -100,6 +105,7 @@ function toolSchemas() {
             properties: {
               spreadsheetId: { type: 'string' },
               range: { type: 'string' },
+              account: accountProperty(),
               valueRenderOption: {
                 type: 'string',
                 enum: ['FORMATTED_VALUE', 'UNFORMATTED_VALUE', 'FORMULA'],
@@ -119,6 +125,7 @@ function toolSchemas() {
               spreadsheetId: { type: 'string' },
               range: { type: 'string' },
               values: { type: 'array', items: { type: 'array' } },
+              account: accountProperty(),
               valueInputOption: { type: 'string', enum: ['RAW', 'USER_ENTERED'] },
             },
             required: ['spreadsheetId', 'range', 'values'],
@@ -199,15 +206,16 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
                 driveId: typeof (args as any).driveId === 'string' ? (args as any).driveId : undefined,
                 mimeTypes: Array.isArray((args as any).mimeTypes) ? ((args as any).mimeTypes as any[]).map(String) : undefined,
                 includeTrashed: Boolean((args as any).includeTrashed),
+                account: (args as any).account === 'personal' ? 'personal' : 'pro',
               });
               return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } };
             }
             case 'google_docs_read': {
-              const result = await readGoogleDoc(config, String((args as any).documentId ?? ''));
+              const result = await readGoogleDoc(config, String((args as any).documentId ?? ''), (args as any).account === 'personal' ? 'personal' : 'pro');
               return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } };
             }
             case 'google_sheets_get_metadata': {
-              const result = await getSheetMetadata(config, String((args as any).spreadsheetId ?? ''));
+              const result = await getSheetMetadata(config, String((args as any).spreadsheetId ?? ''), (args as any).account === 'personal' ? 'personal' : 'pro');
               return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } };
             }
             case 'google_sheets_read_range': {
@@ -220,6 +228,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
                 String((args as any).spreadsheetId ?? ''),
                 String((args as any).range ?? ''),
                 valueRenderOption,
+                (args as any).account === 'personal' ? 'personal' : 'pro',
               );
               return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } };
             }
@@ -232,6 +241,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
                 String((args as any).range ?? ''),
                 values,
                 valueInputOption,
+                (args as any).account === 'personal' ? 'personal' : 'pro',
               );
               return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } };
             }
