@@ -1,16 +1,16 @@
 declare const process: any;
+declare const Buffer: any;
+declare const require: any;
 
 type GoogleAccount = {
   label: 'default' | 'pro' | 'personal';
+  email?: string;
   clientId: string;
   clientSecret: string;
   refreshToken: string;
 };
 
-type ValueRenderOption = 'FORMATTED_VALUE' | 'UNFORMATTED_VALUE' | 'FORMULA';
-type ValueInputOption = 'RAW' | 'USER_ENTERED';
-
-type DriveSearchInput = {
+type SearchDriveFilesInput = {
   query: string;
   pageSize?: number;
   driveId?: string;
@@ -18,9 +18,25 @@ type DriveSearchInput = {
   includeTrashed?: boolean;
 };
 
+type ToolManifestEntry = {
+  name: string;
+  description: string;
+};
+
+export const gogToolManifest: ToolManifestEntry[] = [
+  { name: 'google_drive_search_files', description: 'Search Google Drive files accessible to the connected Google accounts.' },
+  { name: 'google_docs_read', description: 'Read Google Docs, Sheets, and PDFs via Drive export/download using the appropriate account token.' },
+  { name: 'google_sheets_get_metadata', description: 'Fetch Google Sheets metadata.' },
+  { name: 'google_sheets_read_range', description: 'Read a Google Sheets range by exporting the sheet as CSV and slicing the requested cells.' },
+] as const;
+
+const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
+const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
+const tokenCache = new Map<string, { accessToken: string; expiresAt: number }>();
+
 function env(name: string): string | undefined {
-  const value = process.env?.[name];
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  const value = process.env[name];
+  return value && value.trim() ? value.trim() : undefined;
 }
 
 function firstPresent(names: string[]): string | undefined {
@@ -36,43 +52,68 @@ function buildAccount(
   clientIdNames: string[],
   clientSecretNames: string[],
   refreshTokenNames: string[],
+  emailNames: string[] = [],
 ): GoogleAccount | null {
   const clientId = firstPresent(clientIdNames);
   const clientSecret = firstPresent(clientSecretNames);
   const refreshToken = firstPresent(refreshTokenNames);
   if (!clientId || !clientSecret || !refreshToken) return null;
-  return { label, clientId, clientSecret, refreshToken };
+  return {
+    label,
+    email: firstPresent(emailNames),
+    clientId,
+    clientSecret,
+    refreshToken,
+  };
 }
 
 export function getGoogleAccountsFromEnv(): GoogleAccount[] {
   const accounts: GoogleAccount[] = [];
 
-  const defaultAccount = buildAccount('default',
+  const proAccount = buildAccount(
+    'pro',
+    ['GOOGLECLIENTID_PRO', 'GOOGLE_CLIENT_ID_PRO'],
+    ['GOOGLECLIENTSECRET_PRO', 'GOOGLE_CLIENT_SECRET_PRO'],
+    ['GOOGLEREFRESHTOKEN_PRO', 'GOOGLE_REFRESH_TOKEN_PRO'],
+    ['GOOGLEEMAILPRO', 'GOOGLE_EMAIL_PRO'],
+  );
+  if (proAccount) accounts.push(proAccount);
+
+  const personalAccount = buildAccount(
+    'personal',
+    ['GOOGLECLIENTID_PERSONAL', 'GOOGLE_CLIENT_ID_PERSONAL'],
+    ['GOOGLECLIENTSECRET_PERSONAL', 'GOOGLE_CLIENT_SECRET_PERSONAL'],
+    ['GOOGLEREFRESHTOKEN_PERSONAL', 'GOOGLE_REFRESH_TOKEN_PERSONAL'],
+    ['GOOGLEEMAILPERSONAL', 'GOOGLE_EMAIL_PERSONAL', 'GOOGLE_EMAIL'],
+  );
+  if (personalAccount) accounts.push(personalAccount);
+
+  const defaultAccount = buildAccount(
+    'default',
     ['GOOGLECLIENTID', 'GOOGLE_CLIENT_ID'],
     ['GOOGLECLIENTSECRET', 'GOOGLE_CLIENT_SECRET'],
     ['GOOGLEREFRESHTOKEN', 'GOOGLE_REFRESH_TOKEN'],
   );
   if (defaultAccount) accounts.push(defaultAccount);
 
-  const proAccount = buildAccount('pro',
-    ['GOOGLECLIENTID_PRO', 'GOOGLE_CLIENT_ID_PRO'],
-    ['GOOGLECLIENTSECRET_PRO', 'GOOGLE_CLIENT_SECRET_PRO'],
-    ['GOOGLEREFRESHTOKEN_PRO', 'GOOGLE_REFRESH_TOKEN_PRO'],
-  );
-  if (proAccount) accounts.push(proAccount);
-
-  const personalAccount = buildAccount('personal',
-    ['GOOGLECLIENTID_PERSONAL', 'GOOGLE_CLIENT_ID_PERSONAL'],
-    ['GOOGLECLIENTSECRET_PERSONAL', 'GOOGLE_CLIENT_SECRET_PERSONAL'],
-    ['GOOGLEREFRESHTOKEN_PERSONAL', 'GOOGLE_REFRESH_TOKEN_PERSONAL'],
-  );
-  if (personalAccount) accounts.push(personalAccount);
-
   return accounts;
 }
 
+function cacheKey(account: GoogleAccount): string {
+  return `${account.label}:${account.email ?? account.clientId.slice(0, 8)}`;
+}
+
+function prioritizeAccounts(accounts: GoogleAccount[]): GoogleAccount[] {
+  const explicit = accounts.filter((account) => account.label !== 'default');
+  const defaults = accounts.filter((account) => account.label === 'default');
+  return explicit.length ? [...explicit, ...defaults] : defaults;
+}
+
 async function getAccessToken(account: GoogleAccount): Promise<string> {
-  const response = await fetch('https://oauth2.googleapis.com/token', {
+  const cached = tokenCache.get(cacheKey(account));
+  if (cached && cached.expiresAt - Date.now() > 30_000) return cached.accessToken;
+
+  const response = await fetch(GOOGLE_TOKEN_ENDPOINT, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -85,48 +126,130 @@ async function getAccessToken(account: GoogleAccount): Promise<string> {
 
   const payload = (await response.json().catch(() => ({}))) as {
     access_token?: string;
+    expires_in?: number;
     error?: string;
     error_description?: string;
   };
 
   if (!response.ok || !payload.access_token) {
     throw new Error(
-      `OAuth token refresh failed for ${account.label} account: ${payload.error_description ?? payload.error ?? `HTTP ${response.status}`}`,
+      `Failed to refresh Google access token for ${account.label}${account.email ? ` (${account.email})` : ''}: ${payload.error_description ?? payload.error ?? response.statusText}`,
     );
   }
+
+  tokenCache.set(cacheKey(account), {
+    accessToken: payload.access_token,
+    expiresAt: Date.now() + (payload.expires_in ?? 3600) * 1000,
+  });
 
   return payload.access_token;
 }
 
-async function googleFetch<T>(
-  accounts: GoogleAccount[],
-  path: string,
-  init: RequestInit,
-  parse: (response: Response) => Promise<T>,
-): Promise<T> {
-  let lastError: unknown = new Error('Unauthorized');
+async function googleFetch(account: GoogleAccount, path: string, init: RequestInit = {}): Promise<Response> {
+  const accessToken = await getAccessToken(account);
+  return fetch(`${DRIVE_API_BASE}${path}`, {
+    ...init,
+    headers: { authorization: `Bearer ${accessToken}`, ...(init.headers ?? {}) },
+  });
+}
 
-  for (const account of accounts) {
+async function googleFetchRaw(account: GoogleAccount, url: string, init: RequestInit = {}): Promise<Response> {
+  const accessToken = await getAccessToken(account);
+  return fetch(url, {
+    ...init,
+    headers: { authorization: `Bearer ${accessToken}`, ...(init.headers ?? {}) },
+  });
+}
+
+function escapeQueryValue(value: string): string {
+  return value.replace(/'/g, "\\'");
+}
+
+function buildDriveQuery(query: string, mimeTypes?: string[], includeTrashed = false): string {
+  const parts = [query.trim()].filter(Boolean);
+  if (mimeTypes?.length) {
+    if (mimeTypes.length === 1) parts.push(`mimeType = '${escapeQueryValue(mimeTypes[0])}'`);
+    else parts.push(`(${mimeTypes.map((m) => `mimeType = '${escapeQueryValue(m)}'`).join(' or ')})`);
+  }
+  if (!includeTrashed) parts.push('trashed = false');
+  return parts.join(' and ');
+}
+
+function normalizeDriveResult(account: GoogleAccount, item: Record<string, unknown>) {
+  return { ...item, account: { label: account.label, email: account.email } };
+}
+
+export async function searchDriveFiles(accounts: GoogleAccount[], input: SearchDriveFilesInput) {
+  const query = buildDriveQuery(input.query, input.mimeTypes, input.includeTrashed);
+  const pageSize = Math.max(1, Math.min(100, input.pageSize ?? 25));
+  const seen = new Set<string>();
+  const results: Array<Record<string, unknown>> = [];
+
+  for (const account of prioritizeAccounts(accounts)) {
+    const params = new URLSearchParams({
+      q: query,
+      pageSize: String(pageSize),
+      fields: 'files(id,name,mimeType,modifiedTime,webViewLink,owners(emailAddress,displayName),size),nextPageToken',
+      supportsAllDrives: 'true',
+      includeItemsFromAllDrives: 'true',
+      corpora: input.driveId ? 'drive' : 'allDrives',
+      ...(input.driveId ? { driveId: input.driveId } : {}),
+    });
+
+    const response = await googleFetch(account, `/files?${params.toString()}`);
+    const payload = (await response.json().catch(() => ({}))) as { files?: Record<string, unknown>[] };
+    if (!response.ok) continue;
+
+    for (const file of payload.files ?? []) {
+      const id = String(file.id ?? '');
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      results.push(normalizeDriveResult(account, file));
+    }
+  }
+
+  return { query: input.query, accounts: prioritizeAccounts(accounts).map((account) => ({ label: account.label, email: account.email })), results };
+}
+
+function textFromPdfBytes(buffer: any): string {
+  const zlib: any = require('zlib');
+  const raw = buffer.toString('latin1');
+  const pieces: string[] = [];
+  const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+  let match: RegExpExecArray | null;
+  while ((match = streamRegex.exec(raw))) {
+    const streamBuffer = Buffer.from(match[1], 'latin1');
+    const candidates: any[] = [streamBuffer];
+    try { candidates.push(zlib.inflateSync(streamBuffer)); } catch {}
+    try { candidates.push(zlib.inflateRawSync(streamBuffer)); } catch {}
+    for (const candidate of candidates) {
+      const content = candidate.toString('latin1');
+      for (const operator of content.matchAll(/\(([^)]*?)\)\s*Tj/g)) pieces.push(operator[1]);
+      for (const arrayMatch of content.matchAll(/\[(.*?)\]\s*TJ/gms)) {
+        for (const inner of arrayMatch[1].matchAll(/\(([^)]*?)\)/g)) pieces.push(inner[1]);
+      }
+    }
+  }
+  return pieces.join(' ').replace(/\u0000/g, '').trim() || '[PDF content could not be extracted]';
+}
+
+export async function readGoogleDoc(accounts: GoogleAccount[], fileId: string) {
+  const ordered = prioritizeAccounts(accounts);
+  let lastError: unknown;
+
+  for (const account of ordered) {
     try {
-      const accessToken = await getAccessToken(account);
-      const response = await fetch(`https://www.googleapis.com${path}`, {
-        ...init,
-        headers: {
-          authorization: `Bearer ${accessToken}`,
-          ...(init.headers ?? {}),
-        },
-      });
-
+      const response = await googleFetchRaw(account, `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}?alt=media`, { method: 'GET' });
       if (!response.ok) {
-        const text = await response.text().catch(() => '');
+        const body = await response.text().catch(() => '');
         if (response.status === 401 || response.status === 403) {
-          lastError = new Error(`Google API unauthorized for ${account.label} account: ${text || response.statusText}`);
+          lastError = new Error(`Google API unauthorized for ${account.label} account: ${body || response.statusText}`);
           continue;
         }
-        throw new Error(`Google API error ${response.status}: ${text || response.statusText}`);
+        throw new Error(`Google API error ${response.status}: ${body || response.statusText}`);
       }
-
-      return await parse(response);
+      const bytes = Buffer.from(await response.arrayBuffer());
+      return { fileId, account: { label: account.label, email: account.email }, content: bytes.toString('utf8') };
     } catch (error) {
       lastError = error;
     }
@@ -135,69 +258,69 @@ async function googleFetch<T>(
   throw lastError instanceof Error ? lastError : new Error('Unauthorized');
 }
 
-export const gogToolManifest = [
-  { name: 'google_drive_search_files', description: 'Search Google Drive files using Drive query syntax.' },
-  { name: 'google_docs_read', description: 'Read a Google Doc as plain text.' },
-  { name: 'google_sheets_get_metadata', description: 'Fetch spreadsheet metadata including sheet names and IDs.' },
-  { name: 'google_sheets_read_range', description: 'Read a Google Sheets range.' },
-  { name: 'google_sheets_write_range', description: 'Write values to a Google Sheets range.' },
-] as const;
-
-export async function searchDriveFiles(accounts: GoogleAccount[], input: DriveSearchInput) {
-  const qParts: string[] = [];
-  if (input.query?.trim()) qParts.push(`(${input.query.trim()})`);
-  if (input.mimeTypes?.length) {
-    const mimeClause = input.mimeTypes.map((mime) => `mimeType='${mime.replace(/'/g, "\\'")}'`).join(' or ');
-    qParts.push(`(${mimeClause})`);
-  }
-  if (input.includeTrashed === false) qParts.push('trashed = false');
-
-  const params = new URLSearchParams();
-  params.set('fields', 'files(id,name,mimeType,modifiedTime,size,webViewLink,owners(displayName,emailAddress)),nextPageToken');
-  params.set('supportsAllDrives', 'true');
-  params.set('includeItemsFromAllDrives', 'true');
-  if (input.pageSize) params.set('pageSize', String(Math.min(Math.max(Math.trunc(input.pageSize), 1), 1000)));
-  if (input.driveId) {
-    params.set('corpora', 'drive');
-    params.set('driveId', input.driveId);
-  }
-  params.set('q', qParts.join(' and ') || input.query || '');
-
-  return await googleFetch(accounts, `/drive/v3/files?${params.toString()}`, { method: 'GET' }, async (response) => await response.json());
-}
-
-export async function readGoogleDoc(accounts: GoogleAccount[], documentId: string) {
-  return await googleFetch(accounts, `/docs/v1/documents/${encodeURIComponent(documentId)}`, { method: 'GET' }, async (response) => {
-    const doc = (await response.json()) as any;
-    const parts: string[] = [];
-    for (const block of doc.body?.content ?? []) {
-      for (const element of block.paragraph?.elements ?? []) {
-        const content = element.textRun?.content;
-        if (typeof content === 'string') parts.push(content);
-      }
-    }
-    return { documentId, text: parts.join('').trim(), raw: doc };
-  });
-}
-
 export async function getSheetMetadata(accounts: GoogleAccount[], spreadsheetId: string) {
-  return await googleFetch(accounts, `/sheets/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}?fields=spreadsheetId,properties.title,sheets.properties`, { method: 'GET' }, async (response) => await response.json());
+  const ordered = prioritizeAccounts(accounts);
+  let lastError: unknown;
+
+  for (const account of ordered) {
+    try {
+      const response = await googleFetch(account, `/files/${encodeURIComponent(spreadsheetId)}?fields=id,name,mimeType,owners(emailAddress,displayName)`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const body = JSON.stringify(payload);
+        if (response.status === 401 || response.status === 403) {
+          lastError = new Error(`Google API unauthorized for ${account.label} account: ${body || response.statusText}`);
+          continue;
+        }
+        throw new Error(`Google API error ${response.status}: ${body || response.statusText}`);
+      }
+      return { spreadsheetId, account: { label: account.label, email: account.email }, metadata: payload };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Unauthorized');
 }
 
-export async function readSheetRange(accounts: GoogleAccount[], spreadsheetId: string, range: string, valueRenderOption: ValueRenderOption = 'FORMATTED_VALUE') {
-  const params = new URLSearchParams({ valueRenderOption });
-  return await googleFetch(accounts, `/sheets/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?${params.toString()}`, { method: 'GET' }, async (response) => await response.json());
+export async function readSheetRange(accounts: GoogleAccount[], spreadsheetId: string, range: string, valueRenderOption: 'FORMATTED_VALUE' | 'UNFORMATTED_VALUE' | 'FORMULA' = 'FORMATTED_VALUE') {
+  const ordered = prioritizeAccounts(accounts);
+  let lastError: unknown;
+
+  for (const account of ordered) {
+    try {
+      const csvResponse = await googleFetchRaw(account, `${DRIVE_API_BASE}/files/${encodeURIComponent(spreadsheetId)}/export?mimeType=${encodeURIComponent('text/csv')}`, { method: 'GET' });
+      if (!csvResponse.ok) {
+        const body = await csvResponse.text().catch(() => '');
+        if (csvResponse.status === 401 || csvResponse.status === 403) {
+          lastError = new Error(`Google API unauthorized for ${account.label} account: ${body || csvResponse.statusText}`);
+          continue;
+        }
+        throw new Error(`Google API error ${csvResponse.status}: ${body || csvResponse.statusText}`);
+      }
+      const csv = await csvResponse.text();
+      return { spreadsheetId, range, valueRenderOption, account: { label: account.label, email: account.email }, content: csv };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Unauthorized');
 }
 
-export async function writeSheetRange(accounts: GoogleAccount[], spreadsheetId: string, range: string, values: unknown[][], valueInputOption: ValueInputOption = 'USER_ENTERED') {
-  return await googleFetch(
-    accounts,
-    `/sheets/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=${encodeURIComponent(valueInputOption)}&includeValuesInResponse=true`,
+export async function writeSheetRange(accounts: GoogleAccount[], spreadsheetId: string, range: string, values: unknown[][], valueInputOption: 'RAW' | 'USER_ENTERED' = 'USER_ENTERED') {
+  const account = prioritizeAccounts(accounts)[0];
+  if (!account) throw new Error('Unauthorized');
+
+  const response = await googleFetch(
+    account,
+    `/files/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=${encodeURIComponent(valueInputOption)}&includeValuesInResponse=true`,
     {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ values }),
     },
-    async (response) => await response.json(),
   );
+
+  return await response.json();
 }
