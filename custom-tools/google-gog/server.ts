@@ -1,3 +1,5 @@
+// Rebuilt Google Drive bridge using Composio SDK (no direct Google Drive API calls)
+
 declare const process: any;
 declare const Buffer: any;
 declare const require: any;
@@ -9,6 +11,9 @@ type GoogleAccount = {
   clientSecret: string;
   refreshToken: string;
 };
+
+// Kept for backwards compatibility with mcp-server.ts typing
+export type GoogleGogConfig = Record<string, never>;
 
 function normalizeAccountLabel(label: unknown): 'pro' | 'personal' {
   return label === 'personal' ? 'personal' : 'pro';
@@ -41,7 +46,9 @@ export const gogToolManifest: ToolManifestEntry[] = [
 
 const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
+
 const tokenCache = new Map<string, { accessToken: string; expiresAt: number }>();
+let composioClient: any | null = null;
 
 function env(name: string): string | undefined {
   const value = process.env[name];
@@ -56,27 +63,27 @@ function firstPresent(names: string[]): string | undefined {
   return undefined;
 }
 
-function buildAccount(
-  label: GoogleAccount['label'],
-  clientIdNames: string[],
-  clientSecretNames: string[],
-  refreshTokenNames: string[],
-  emailNames: string[] = [],
-): GoogleAccount | null {
-  const clientId = firstPresent(clientIdNames);
-  const clientSecret = firstPresent(clientSecretNames);
-  const refreshToken = firstPresent(refreshTokenNames);
-  if (!clientId || !clientSecret || !refreshToken) return null;
-  return {
-    label,
-    email: firstPresent(emailNames),
-    clientId,
-    clientSecret,
-    refreshToken,
-  };
-}
+function getGoogleAccountsFromEnvImpl(): GoogleAccount[] {
+  function buildAccount(
+    label: GoogleAccount['label'],
+    clientIdNames: string[],
+    clientSecretNames: string[],
+    refreshTokenNames: string[],
+    emailNames: string[] = [],
+  ): GoogleAccount | null {
+    const clientId = firstPresent(clientIdNames);
+    const clientSecret = firstPresent(clientSecretNames);
+    const refreshToken = firstPresent(refreshTokenNames);
+    if (!clientId || !clientSecret || !refreshToken) return null;
+    return {
+      label,
+      email: firstPresent(emailNames),
+      clientId,
+      clientSecret,
+      refreshToken,
+    };
+  }
 
-export function getGoogleAccountsFromEnv(): GoogleAccount[] {
   const proAccount = buildAccount(
     'pro',
     ['GOOGLECLIENTID_PRO', 'GOOGLE_CLIENT_ID_PRO'],
@@ -96,6 +103,10 @@ export function getGoogleAccountsFromEnv(): GoogleAccount[] {
   return [proAccount, personalAccount].filter((account): account is GoogleAccount => Boolean(account));
 }
 
+export function getGoogleAccountsFromEnv(): GoogleAccount[] {
+  return getGoogleAccountsFromEnvImpl();
+}
+
 function cacheKey(account: GoogleAccount): string {
   const label = normalizeAccountLabel(account.label);
   return `${label}:${account.email ?? account.clientId.slice(0, 8)}`;
@@ -105,6 +116,14 @@ function orderedAccounts(accounts: GoogleAccount[]): GoogleAccount[] {
   const pro = accounts.filter((account) => normalizeAccountLabel(account.label) === 'pro');
   const personal = accounts.filter((account) => normalizeAccountLabel(account.label) === 'personal');
   return [...pro, ...personal];
+}
+
+function accessCandidates(accounts: GoogleAccount[], preferred?: AccountLabel): GoogleAccount[] {
+  const candidates = orderedAccounts(accounts);
+  if (!preferred) return candidates;
+  const preferredAccount = candidates.filter((account) => normalizeAccountLabel(account.label) === preferred);
+  const fallbackAccount = candidates.filter((account) => normalizeAccountLabel(account.label) !== preferred);
+  return [...preferredAccount, ...fallbackAccount];
 }
 
 function normalizeDriveResourceId(input: string): string {
@@ -150,20 +169,57 @@ async function getAccessToken(account: GoogleAccount): Promise<string> {
   return payload.access_token;
 }
 
-async function googleFetch(account: GoogleAccount, path: string, init: RequestInit = {}): Promise<Response> {
-  const accessToken = await getAccessToken(account);
-  return fetch(`${DRIVE_API_BASE}${path}`, {
-    ...init,
-    headers: { authorization: `Bearer ${accessToken}`, ...(init.headers ?? {}) },
-  });
+async function getComposioClient(): Promise<any> {
+  if (composioClient) return composioClient;
+
+  const apiKey = env('COMPOSIO_API_KEY');
+  if (!apiKey) {
+    throw new Error('Missing COMPOSIO_API_KEY in environment.');
+  }
+
+  // Dynamic import so the bridge can still load even if dependency install is not present yet.
+  const mod: any = await import('@composio/client');
+  const Composio = mod.default ?? mod;
+
+  composioClient = new Composio({ apiKey });
+  return composioClient;
 }
 
-async function googleFetchRaw(account: GoogleAccount, url: string, init: RequestInit = {}): Promise<Response> {
+async function composioProxyGoogle(
+  account: GoogleAccount,
+  endpoint: string,
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD',
+  opts?: {
+    body?: unknown;
+    toolkitSlug?: string;
+    expectBinary?: boolean;
+  },
+): Promise<{ status: number; data?: unknown; binaryText?: string }> {
+  const client = await getComposioClient();
   const accessToken = await getAccessToken(account);
-  return fetch(url, {
-    ...init,
-    headers: { authorization: `Bearer ${accessToken}`, ...(init.headers ?? {}) },
+
+  const res = await client.tools.proxy({
+    endpoint,
+    method,
+    body: opts?.body,
+    custom_connection_data: {
+      authScheme: 'OAUTH2',
+      toolkitSlug: opts?.toolkitSlug ?? 'googledrive',
+      val: {
+        access_token: accessToken,
+      },
+    },
   });
+
+  const status = res?.status ?? 200;
+
+  if (res?.binary_data?.url) {
+    const url: string = res.binary_data.url;
+    const buf = Buffer.from(await (await fetch(url)).arrayBuffer());
+    return { status, binaryText: buf.toString('utf8') };
+  }
+
+  return { status, data: res?.data };
 }
 
 function escapeQueryValue(value: string): string {
@@ -184,17 +240,10 @@ function normalizeDriveResult(account: GoogleAccount, item: Record<string, unkno
   return { ...item, account: { label: normalizeAccountLabel(account.label), email: account.email } };
 }
 
-function accessCandidates(accounts: GoogleAccount[], preferred?: AccountLabel): GoogleAccount[] {
-  const candidates = orderedAccounts(accounts);
-  if (!preferred) return candidates;
-  const preferredAccount = candidates.filter((account) => normalizeAccountLabel(account.label) === preferred);
-  const fallbackAccount = candidates.filter((account) => normalizeAccountLabel(account.label) !== preferred);
-  return [...preferredAccount, ...fallbackAccount];
-}
-
 export async function searchDriveFiles(accounts: GoogleAccount[], input: SearchDriveFilesInput) {
   const query = buildDriveQuery(input.query, input.mimeTypes, input.includeTrashed);
   const pageSize = Math.max(1, Math.min(100, input.pageSize ?? 25));
+
   const seen = new Set<string>();
   const results: Array<Record<string, unknown>> = [];
   const candidates = accessCandidates(accounts, input.account);
@@ -203,26 +252,31 @@ export async function searchDriveFiles(accounts: GoogleAccount[], input: SearchD
     const params = new URLSearchParams({
       q: query,
       pageSize: String(pageSize),
-      fields: 'files(id,name,mimeType,modifiedTime,webViewLink,owners(emailAddress,displayName),size),nextPageToken',
+      fields: 'files(id,name,mimeType,modifiedTime,webViewLink,owners(emailAddress,displayName),size)',
       supportsAllDrives: 'true',
       includeItemsFromAllDrives: 'true',
       corpora: input.driveId ? 'drive' : 'allDrives',
       ...(input.driveId ? { driveId: input.driveId } : {}),
     });
 
-    const response = await googleFetch(account, `/files?${params.toString()}`);
-    const payload = (await response.json().catch(() => ({}))) as { files?: Record<string, unknown>[] };
-    if (!response.ok) continue;
+    const endpoint = `${DRIVE_API_BASE}/files?${params.toString()}`;
+    const res = await composioProxyGoogle(account, endpoint, 'GET', { toolkitSlug: 'googledrive' });
+    if (res.status < 200 || res.status >= 300) continue;
 
+    const payload = (res.data ?? {}) as { files?: Record<string, unknown>[] };
     for (const file of payload.files ?? []) {
-      const id = String(file.id ?? '');
+      const id = String((file as any).id ?? '');
       if (!id || seen.has(id)) continue;
       seen.add(id);
       results.push(normalizeDriveResult(account, file));
     }
   }
 
-  return { query: input.query, accounts: candidates.map((account) => ({ label: account.label, email: account.email })), results };
+  return {
+    query: input.query,
+    accounts: candidates.map((account) => ({ label: account.label, email: account.email })),
+    results,
+  };
 }
 
 function helpfulTokenError(accounts: GoogleAccount[]): Error {
@@ -233,21 +287,24 @@ function helpfulTokenError(accounts: GoogleAccount[]): Error {
 export async function readGoogleDoc(accounts: GoogleAccount[], fileIdOrUrl: string, account?: AccountLabel) {
   const candidates = accessCandidates(accounts, account);
   const fileId = normalizeDriveResourceId(fileIdOrUrl);
+
   let lastError: unknown;
 
   for (const account of candidates) {
     try {
-      const response = await googleFetchRaw(account, `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}?alt=media`, { method: 'GET' });
-      if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        if (response.status === 401 || response.status === 403) {
-          lastError = new Error(`Google API unauthorized for ${normalizeAccountLabel(account.label)} account: ${body || response.statusText}`);
-          continue;
-        }
-        throw new Error(`Google API error ${response.status}: ${body || response.statusText}`);
+      const endpoint = `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}?alt=media`;
+      const res = await composioProxyGoogle(account, endpoint, 'GET', { toolkitSlug: 'googledrive', expectBinary: true });
+
+      if (res.binaryText == null) {
+        lastError = new Error('Composio proxy returned no binary data for document read.');
+        continue;
       }
-      const bytes = Buffer.from(await response.arrayBuffer());
-      return { fileId, account: { label: account.label, email: account.email }, content: bytes.toString('utf8') };
+
+      return {
+        fileId,
+        account: { label: account.label, email: account.email },
+        content: res.binaryText,
+      };
     } catch (error) {
       lastError = error;
     }
@@ -259,17 +316,22 @@ export async function readGoogleDoc(accounts: GoogleAccount[], fileIdOrUrl: stri
 export async function getSheetMetadata(accounts: GoogleAccount[], spreadsheetIdOrUrl: string, account?: AccountLabel) {
   const candidates = accessCandidates(accounts, account);
   const spreadsheetId = normalizeDriveResourceId(spreadsheetIdOrUrl);
+
   let lastError: unknown;
 
   for (const account of candidates) {
     try {
-      const response = await googleFetch(account, `/files/${encodeURIComponent(spreadsheetId)}?fields=id,name,mimeType,owners(emailAddress,displayName)`);
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        const body = JSON.stringify(payload);
-        throw new Error(`Google API error ${response.status}: ${body || response.statusText}`);
+      const endpoint = `${DRIVE_API_BASE}/files/${encodeURIComponent(spreadsheetId)}?fields=id,name,mimeType,owners(emailAddress,displayName)`;
+      const res = await composioProxyGoogle(account, endpoint, 'GET', { toolkitSlug: 'googledrive' });
+      if (res.status < 200 || res.status >= 300) {
+        throw new Error(`Google API error ${res.status}: ${JSON.stringify(res.data ?? '')}`);
       }
-      return { spreadsheetId, account: { label: account.label, email: account.email }, metadata: payload };
+
+      return {
+        spreadsheetId,
+        account: { label: account.label, email: account.email },
+        metadata: res.data,
+      };
     } catch (error) {
       lastError = error;
     }
@@ -278,20 +340,35 @@ export async function getSheetMetadata(accounts: GoogleAccount[], spreadsheetIdO
   throw lastError instanceof Error ? lastError : helpfulTokenError(candidates);
 }
 
-export async function readSheetRange(accounts: GoogleAccount[], spreadsheetIdOrUrl: string, range: string, valueRenderOption: 'FORMATTED_VALUE' | 'UNFORMATTED_VALUE' | 'FORMULA' = 'FORMATTED_VALUE', account?: AccountLabel) {
+export async function readSheetRange(
+  accounts: GoogleAccount[],
+  spreadsheetIdOrUrl: string,
+  range: string,
+  valueRenderOption: 'FORMATTED_VALUE' | 'UNFORMATTED_VALUE' | 'FORMULA' = 'FORMATTED_VALUE',
+  account?: AccountLabel,
+) {
+  // For now we keep the previous behavior: export the spreadsheet as CSV and return the full content.
+  // Callers can slice if they need tighter cell-level results.
+
   const candidates = accessCandidates(accounts, account);
   const spreadsheetId = normalizeDriveResourceId(spreadsheetIdOrUrl);
+
   let lastError: unknown;
 
   for (const account of candidates) {
     try {
-      const csvResponse = await googleFetchRaw(account, `${DRIVE_API_BASE}/files/${encodeURIComponent(spreadsheetId)}/export?mimeType=${encodeURIComponent('text/csv')}`, { method: 'GET' });
-      if (!csvResponse.ok) {
-        const body = await csvResponse.text().catch(() => '');
-        throw new Error(`Google API error ${csvResponse.status}: ${body || csvResponse.statusText}`);
-      }
-      const csv = await csvResponse.text();
-      return { spreadsheetId, range, valueRenderOption, account: { label: account.label, email: account.email }, content: csv };
+      const endpoint = `${DRIVE_API_BASE}/files/${encodeURIComponent(spreadsheetId)}/export?mimeType=${encodeURIComponent('text/csv')}`;
+      const res = await composioProxyGoogle(account, endpoint, 'GET', { toolkitSlug: 'googledrive', expectBinary: true });
+
+      if (res.binaryText == null) throw new Error(`Google Sheets export returned no CSV text (status ${res.status}).`);
+
+      return {
+        spreadsheetId,
+        range,
+        valueRenderOption,
+        account: { label: account.label, email: account.email },
+        content: res.binaryText,
+      };
     } catch (error) {
       lastError = error;
     }
@@ -300,20 +377,29 @@ export async function readSheetRange(accounts: GoogleAccount[], spreadsheetIdOrU
   throw lastError instanceof Error ? lastError : helpfulTokenError(candidates);
 }
 
-export async function writeSheetRange(accounts: GoogleAccount[], spreadsheetIdOrUrl: string, range: string, values: unknown[][], valueInputOption: 'RAW' | 'USER_ENTERED' = 'USER_ENTERED', preferredAccount?: AccountLabel) {
-  const account = accessCandidates(accounts, preferredAccount)[0];
+export async function writeSheetRange(
+  accounts: GoogleAccount[],
+  spreadsheetIdOrUrl: string,
+  range: string,
+  values: unknown[][],
+  valueInputOption: 'RAW' | 'USER_ENTERED' = 'USER_ENTERED',
+  preferredAccount?: AccountLabel,
+) {
+  const preferred = preferredAccount;
+  const account = accessCandidates(accounts, preferred)[0];
   const spreadsheetId = normalizeDriveResourceId(spreadsheetIdOrUrl);
   if (!account) throw new Error('Unable to access Google Sheets because no pro or personal credentials are configured.');
 
-  const response = await googleFetch(
-    account,
-    `/files/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=${encodeURIComponent(valueInputOption)}&includeValuesInResponse=true`,
-    {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ values }),
-    },
-  );
+  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=${encodeURIComponent(valueInputOption)}&includeValuesInResponse=true`;
 
-  return await response.json();
+  const res = await composioProxyGoogle(account, endpoint, 'PUT', {
+    toolkitSlug: 'googledrive',
+    body: { values },
+  });
+
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`Google Sheets write failed ${res.status}: ${JSON.stringify(res.data ?? '')}`);
+  }
+
+  return res.data;
 }

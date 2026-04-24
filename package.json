@@ -2,6 +2,9 @@
   "name": "google-gog-mcp",
   "private": true,
   "version": "1.0.0",
+  "dependencies": {
+    "@composio/client": "^0.1.0-alpha.66"
+  },
   "devDependencies": {
     "@types/node": "^22.14.1",
     "typescript": "^5.8.3"
