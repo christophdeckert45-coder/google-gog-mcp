@@ -316,7 +316,7 @@ export async function searchDriveFiles(accounts: GoogleAccount[], input: SearchD
         ...(input.driveId ? { driveId: input.driveId } : {}),
       });
 
-      const endpoint = `${DRIVE_API_BASE}/files?${params.toString()}`;
+      const endpoint = DRIVE_API_BASE + '/files?' + params.toString();
       const res = await composioProxyGoogle(account, endpoint, 'GET', { toolkitSlug: 'googledrive', retryOnAuthFailure: true });
       if (res.status < 200 || res.status >= 300) continue;
 
@@ -328,27 +328,13 @@ export async function searchDriveFiles(accounts: GoogleAccount[], input: SearchD
         results.push(normalizeDriveResult(account, file));
       }
     } catch {
-      // Keep trying other accounts if one refresh token is revoked or expired.
       continue;
-    }
-  });
-
-    const endpoint = `${DRIVE_API_BASE}/files?${params.toString()}`;
-    const res = await composioProxyGoogle(account, endpoint, 'GET', { toolkitSlug: 'googledrive' });
-    if (res.status < 200 || res.status >= 300) continue;
-
-    const payload = (res.data ?? {}) as { files?: Record<string, unknown>[] };
-    for (const file of payload.files ?? []) {
-      const id = String((file as any).id ?? '');
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-      results.push(normalizeDriveResult(account, file));
     }
   }
 
   return {
     query: input.query,
-    accounts: candidates.map((account) => ({ label: account.label, email: account.email })),
+    accounts: candidates.map((account) => ({ label: normalizeAccountLabel(account.label), email: account.email })),
     results,
   };
 }
