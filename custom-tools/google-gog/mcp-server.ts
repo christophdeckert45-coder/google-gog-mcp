@@ -39,7 +39,7 @@ export function createGoogleGogServer(config: GoogleGogServerConfig) {
 
     switch (name) {
       case "google_drive_search_files": {
-        const account = args?.account === "personal" ? "personal" : "pro";
+        const account = args?.account === "personal" ? "personal" : undefined;
         return textResult(await searchDriveFiles(config, {
           query: String(args?.query ?? ""),
           pageSize: args?.pageSize ? Number(args.pageSize) : undefined,
@@ -50,11 +50,11 @@ export function createGoogleGogServer(config: GoogleGogServerConfig) {
         }));
       }
       case "google_docs_read": {
-        const account = args?.account === "personal" ? "personal" : "pro";
+        const account = args?.account === "personal" ? "personal" : undefined;
         return textResult(await readGoogleDoc(config, String(args?.documentId ?? ""), account));
       }
       case "google_sheets_get_metadata": {
-        const account = args?.account === "personal" ? "personal" : "pro";
+        const account = args?.account === "personal" ? "personal" : undefined;
         return textResult(await getSheetMetadata(config, String(args?.spreadsheetId ?? ""), account));
       }
       case "google_sheets_read_range": {
@@ -62,14 +62,14 @@ export function createGoogleGogServer(config: GoogleGogServerConfig) {
           args?.valueRenderOption === "UNFORMATTED_VALUE" || args?.valueRenderOption === "FORMULA"
             ? (args.valueRenderOption as "FORMATTED_VALUE" | "UNFORMATTED_VALUE" | "FORMULA")
             : "FORMATTED_VALUE";
-        const account = args?.account === "personal" ? "personal" : "pro";
+        const account = args?.account === "personal" ? "personal" : undefined;
         return textResult(
           await readSheetRange(config, String(args?.spreadsheetId ?? ""), String(args?.range ?? ""), valueRenderOption, account),
         );
       }
       case "google_sheets_write_range": {
         const valueInputOption = args?.valueInputOption === "RAW" ? "RAW" : "USER_ENTERED";
-        const account = args?.account === "personal" ? "personal" : "pro";
+        const account = args?.account === "personal" ? "personal" : undefined;
         return textResult(
           await writeSheetRange(
             config,

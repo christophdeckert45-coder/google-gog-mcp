@@ -13,6 +13,7 @@ import {
   readGoogleDoc,
   readSheetRange,
   writeSheetRange,
+  googleGogConnectionStatus,
   searchDriveFiles,
 } from '../custom-tools/google-gog/server';
 
@@ -53,8 +54,8 @@ function accountProperty() {
   return { type: 'string', enum: ['pro', 'personal'] };
 }
 
-function normalizeRequestedAccount(account: unknown): 'pro' | 'personal' {
-  return account === 'personal' ? 'personal' : 'pro';
+function requestedAccount(args: Record<string, unknown>): 'pro' | 'personal' | undefined {
+  return args.account === 'personal' ? 'personal' : args.account === 'pro' ? 'pro' : undefined;
 }
 
 function toolSchemas() {
@@ -204,22 +205,25 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
           switch (name) {
             case 'google_drive_search_files': {
+              const account = requestedAccount(args as Record<string, unknown>);
               const result = await searchDriveFiles(config, {
                 query: String((args as any).query ?? ''),
                 pageSize: (args as any).pageSize ? Number((args as any).pageSize) : undefined,
                 driveId: typeof (args as any).driveId === 'string' ? (args as any).driveId : undefined,
                 mimeTypes: Array.isArray((args as any).mimeTypes) ? ((args as any).mimeTypes as any[]).map(String) : undefined,
                 includeTrashed: Boolean((args as any).includeTrashed),
-                account: normalizeRequestedAccount((args as any).account),
+                ...(account ? { account } : {}),
               });
               return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } };
             }
             case 'google_docs_read': {
-              const result = await readGoogleDoc(config, String((args as any).documentId ?? ''), normalizeRequestedAccount((args as any).account));
+              const account = requestedAccount(args as Record<string, unknown>);
+              const result = await readGoogleDoc(config, String((args as any).documentId ?? ''), account);
               return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } };
             }
             case 'google_sheets_get_metadata': {
-              const result = await getSheetMetadata(config, String((args as any).spreadsheetId ?? ''), normalizeRequestedAccount((args as any).account));
+              const account = requestedAccount(args as Record<string, unknown>);
+              const result = await getSheetMetadata(config, String((args as any).spreadsheetId ?? ''), account);
               return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } };
             }
             case 'google_sheets_read_range': {
@@ -227,28 +231,35 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
                 (args as any).valueRenderOption === 'UNFORMATTED_VALUE' || (args as any).valueRenderOption === 'FORMULA'
                   ? ((args as any).valueRenderOption as any)
                   : 'FORMATTED_VALUE';
+              const account = requestedAccount(args as Record<string, unknown>);
               const result = await readSheetRange(
                 config,
                 String((args as any).spreadsheetId ?? ''),
                 String((args as any).range ?? ''),
                 valueRenderOption,
-                normalizeRequestedAccount((args as any).account),
+                account,
               );
               return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } };
             }
             case 'google_sheets_write_range': {
               const valueInputOption = (args as any).valueInputOption === 'RAW' ? 'RAW' : 'USER_ENTERED';
               const values = Array.isArray((args as any).values) ? ((args as any).values as any[][]) : [];
+              const account = requestedAccount(args as Record<string, unknown>);
               const result = await writeSheetRange(
                 config,
                 String((args as any).spreadsheetId ?? ''),
                 String((args as any).range ?? ''),
                 values,
                 valueInputOption,
-                normalizeRequestedAccount((args as any).account),
+                account,
               );
               return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } };
             }
+            case 'google_gog_connection_status': {
+              const status = googleGogConnectionStatus();
+              return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(status, null, 2) }] } };
+            }
+
             default:
               return { jsonrpc: '2.0', id, error: { code: -32601, message: `Unknown tool: ${name}` } };
           }
