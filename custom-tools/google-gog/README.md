@@ -18,12 +18,12 @@ OAuth / connection notes
   - drive.readonly
   - documents.readonly
   - spreadsheets.readonly
-- This workspace does not currently expose a dedicated permissions flow for these scopes, so the server is scaffolded to accept standard Google OAuth env vars instead.
+- This workspace does not currently expose a dedicated permissions flow for these scopes, so the server is scaffolded to accept only the active-account suffixed Google OAuth env vars instead.
 
 Environment variables expected by the wrapper
-- GOOGLE_CLIENT_ID
-- GOOGLE_CLIENT_SECRET
-- GOOGLE_REFRESH_TOKEN
+- GOOGLECLIENTID_PRO / GOOGLE_CLIENT_ID_PRO
+- GOOGLECLIENTSECRET_PRO / GOOGLE_CLIENT_SECRET_PRO
+- GOOGLEREFRESHTOKEN_PRO / GOOGLE_REFRESH_TOKEN_PRO
 - GOOGLE_REDIRECT_URI (optional)
 - MCP_SERVER_NAME (optional)
 - MCP_SERVER_VERSION (optional)

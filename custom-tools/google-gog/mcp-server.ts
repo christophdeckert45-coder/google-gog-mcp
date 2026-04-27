@@ -151,16 +151,16 @@ const toolInputSchemas: Record<ToolName, Record<string, unknown>> = {
 
 if (import.meta.main) {
   const config = {
-    googleClientId: process.env.GOOGLECLIENTID ?? "",
-    googleClientSecret: process.env.GOOGLECLIENTSECRET ?? "",
-    googleRefreshToken: process.env.GOOGLEREFRESHTOKEN ?? "",
+    googleClientId: process.env.GOOGLECLIENTID_PRO ?? process.env.GOOGLE_CLIENT_ID_PRO ?? "",
+    googleClientSecret: process.env.GOOGLECLIENTSECRET_PRO ?? process.env.GOOGLE_CLIENT_SECRET_PRO ?? "",
+    googleRefreshToken: process.env.GOOGLEREFRESHTOKEN_PRO ?? process.env.GOOGLE_REFRESH_TOKEN_PRO ?? "",
     googleRedirectUri: process.env.GOOGLEREDIRECTURI,
     serverName: process.env.MCP_SERVER_NAME,
     serverVersion: process.env.MCP_SERVER_VERSION,
   } satisfies GoogleGogServerConfig;
 
   if (!config.googleClientId || !config.googleClientSecret || !config.googleRefreshToken) {
-    throw new Error("Missing GOOGLECLIENTID, GOOGLECLIENTSECRET, or GOOGLEREFRESHTOKEN. Use primary account chris@everyday.inc.");
+    throw new Error("Missing GOOGLECLIENTID_PRO, GOOGLECLIENTSECRET_PRO, or GOOGLEREFRESHTOKEN_PRO. Generic GOOGLE* fallbacks are no longer supported. Use the active pro connection credentials.");
   }
 
   await runGoogleGogServer(config);
