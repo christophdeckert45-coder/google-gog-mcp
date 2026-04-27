@@ -126,6 +126,22 @@ export function getGoogleAccountsFromEnv(): GoogleAccount[] {
   return getGoogleAccountsFromEnvImpl();
 }
 
+export function googleGogConnectionStatus() {
+  const accounts = getGoogleAccountsFromEnv();
+  return {
+    accounts: accounts.map((account) => ({
+      label: normalizeAccountLabel(account.label),
+      email: account.email ?? null,
+      hasClientId: Boolean(account.clientId),
+      hasClientSecret: Boolean(account.clientSecret),
+      hasRefreshToken: Boolean(account.refreshToken),
+    })),
+    tokenCacheEntries: tokenCache.size,
+    cacheKeys: Array.from(tokenCache.keys()),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 function cacheKey(account: GoogleAccount): string {
   const label = normalizeAccountLabel(account.label);
   return `${label}:${account.email ?? account.clientId.slice(0, 8)}`;
