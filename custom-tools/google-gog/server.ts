@@ -50,6 +50,25 @@ const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
 const tokenCache = new Map<string, { accessToken: string; expiresAt: number }>();
 let composioClient: any | null = null;
 
+function invalidateTokenCache(account: GoogleAccount) {
+  tokenCache.delete(cacheKey(account));
+}
+
+function isAuthFailure(status: number, payload: unknown, error?: unknown): boolean {
+  const message = [status, JSON.stringify(payload ?? {}), error instanceof Error ? error.message : String(error ?? '')]
+    .join(' ')
+    .toLowerCase();
+  return (
+    status === 401 ||
+    status === 403 ||
+    message.includes('invalid_grant') ||
+    message.includes('expired') ||
+    message.includes('revoked') ||
+    message.includes('unauthorized') ||
+    message.includes('token') && (message.includes('expired') || message.includes('revoked'))
+  );
+}
+
 function env(name: string): string | undefined {
   const value = process.env[name];
   return value && value.trim() ? value.trim() : undefined;
@@ -193,12 +212,13 @@ async function composioProxyGoogle(
     body?: unknown;
     toolkitSlug?: string;
     expectBinary?: boolean;
+    retryOnAuthFailure?: boolean;
   },
 ): Promise<{ status: number; data?: unknown; binaryText?: string }> {
   const client = await getComposioClient();
   const accessToken = await getAccessToken(account);
 
-  const res = await client.tools.proxy({
+  const execute = async () => client.tools.proxy({
     endpoint,
     method,
     body: opts?.body,
@@ -211,7 +231,26 @@ async function composioProxyGoogle(
     },
   });
 
-  const status = res?.status ?? 200;
+  let res = await execute();
+  let status = res?.status ?? 200;
+
+  if (opts?.retryOnAuthFailure !== false && isAuthFailure(status, res?.data)) {
+    invalidateTokenCache(account);
+    const refreshed = await getAccessToken(account);
+    res = await client.tools.proxy({
+      endpoint,
+      method,
+      body: opts?.body,
+      custom_connection_data: {
+        authScheme: 'OAUTH2',
+        toolkitSlug: opts?.toolkitSlug ?? 'googledrive',
+        val: {
+          access_token: refreshed,
+        },
+      },
+    });
+    status = res?.status ?? 200;
+  }
 
   if (res?.binary_data?.url) {
     const url: string = res.binary_data.url;
@@ -261,7 +300,7 @@ export async function searchDriveFiles(accounts: GoogleAccount[], input: SearchD
       });
 
       const endpoint = `${DRIVE_API_BASE}/files?${params.toString()}`;
-      const res = await composioProxyGoogle(account, endpoint, 'GET', { toolkitSlug: 'googledrive' });
+      const res = await composioProxyGoogle(account, endpoint, 'GET', { toolkitSlug: 'googledrive', retryOnAuthFailure: true });
       if (res.status < 200 || res.status >= 300) continue;
 
       const payload = (res.data ?? {}) as { files?: Record<string, unknown>[] };
