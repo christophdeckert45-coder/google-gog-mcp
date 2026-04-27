@@ -144,7 +144,8 @@ export function googleGogConnectionStatus() {
 
 function cacheKey(account: GoogleAccount): string {
   const label = normalizeAccountLabel(account.label);
-  return `${label}:${account.email ?? account.clientId.slice(0, 8)}`;
+  const refreshTokenMarker = account.refreshToken.slice(-8);
+  return `${label}:${account.email ?? account.clientId.slice(0, 8)}:${refreshTokenMarker}`;
 }
 
 function orderedAccounts(accounts: GoogleAccount[]): GoogleAccount[] {
