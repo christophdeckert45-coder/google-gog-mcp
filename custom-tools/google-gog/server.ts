@@ -86,10 +86,10 @@ function getGoogleAccountsFromEnvImpl(): GoogleAccount[] {
 
   const proAccount = buildAccount(
     'pro',
-    ['GOOGLECLIENTID_PRO', 'GOOGLE_CLIENT_ID_PRO'],
-    ['GOOGLECLIENTSECRET_PRO', 'GOOGLE_CLIENT_SECRET_PRO'],
-    ['GOOGLEREFRESHTOKEN_PRO', 'GOOGLE_REFRESH_TOKEN_PRO'],
-    ['GOOGLEEMAILPRO', 'GOOGLE_EMAIL_PRO'],
+    ['GOOGLECLIENTID_PRO', 'GOOGLE_CLIENT_ID_PRO', 'GOOGLECLIENTID', 'GOOGLE_CLIENT_ID'],
+    ['GOOGLECLIENTSECRET_PRO', 'GOOGLE_CLIENT_SECRET_PRO', 'GOOGLECLIENTSECRET', 'GOOGLE_CLIENT_SECRET'],
+    ['GOOGLEREFRESHTOKEN_PRO', 'GOOGLE_REFRESH_TOKEN_PRO', 'GOOGLEREFRESHTOKEN', 'GOOGLE_REFRESH_TOKEN'],
+    ['GOOGLEEMAILPRO', 'GOOGLE_EMAIL_PRO', 'GOOGLE_EMAIL'],
   );
 
   const personalAccount = buildAccount(
@@ -249,15 +249,33 @@ export async function searchDriveFiles(accounts: GoogleAccount[], input: SearchD
   const candidates = accessCandidates(accounts, input.account);
 
   for (const account of candidates) {
-    const params = new URLSearchParams({
-      q: query,
-      pageSize: String(pageSize),
-      fields: 'files(id,name,mimeType,modifiedTime,webViewLink,owners(emailAddress,displayName),size)',
-      supportsAllDrives: 'true',
-      includeItemsFromAllDrives: 'true',
-      corpora: input.driveId ? 'drive' : 'allDrives',
-      ...(input.driveId ? { driveId: input.driveId } : {}),
-    });
+    try {
+      const params = new URLSearchParams({
+        q: query,
+        pageSize: String(pageSize),
+        fields: 'files(id,name,mimeType,modifiedTime,webViewLink,owners(emailAddress,displayName),size)',
+        supportsAllDrives: 'true',
+        includeItemsFromAllDrives: 'true',
+        corpora: input.driveId ? 'drive' : 'allDrives',
+        ...(input.driveId ? { driveId: input.driveId } : {}),
+      });
+
+      const endpoint = `${DRIVE_API_BASE}/files?${params.toString()}`;
+      const res = await composioProxyGoogle(account, endpoint, 'GET', { toolkitSlug: 'googledrive' });
+      if (res.status < 200 || res.status >= 300) continue;
+
+      const payload = (res.data ?? {}) as { files?: Record<string, unknown>[] };
+      for (const file of payload.files ?? []) {
+        const id = String((file as any).id ?? '');
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        results.push(normalizeDriveResult(account, file));
+      }
+    } catch {
+      // Keep trying other accounts if one refresh token is revoked or expired.
+      continue;
+    }
+  });
 
     const endpoint = `${DRIVE_API_BASE}/files?${params.toString()}`;
     const res = await composioProxyGoogle(account, endpoint, 'GET', { toolkitSlug: 'googledrive' });
