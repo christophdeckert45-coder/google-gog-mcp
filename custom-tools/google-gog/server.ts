@@ -352,17 +352,17 @@ export async function readGoogleDoc(accounts: GoogleAccount[], fileIdOrUrl: stri
 
   for (const account of candidates) {
     try {
-      const metadataEndpoint = ${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType&supportsAllDrives=true;
+      const metadataEndpoint = DRIVE_API_BASE + '/files/' + encodeURIComponent(fileId) + '?fields=id,name,mimeType&supportsAllDrives=true';
       const metadataRes = await composioProxyGoogle(account, metadataEndpoint, 'GET', { toolkitSlug: 'googledrive' });
       const mimeType = String((metadataRes.data as { mimeType?: unknown } | undefined)?.mimeType ?? '');
 
       let endpoint: string;
       if (mimeType === 'application/vnd.google-apps.document') {
-        endpoint = ${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent('text/plain')}&supportsAllDrives=true;
+        endpoint = DRIVE_API_BASE + '/files/' + encodeURIComponent(fileId) + '/export?mimeType=' + encodeURIComponent('text/plain') + '&supportsAllDrives=true';
       } else if (mimeType === 'application/vnd.google-apps.spreadsheet') {
-        endpoint = ${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent('text/csv')}&supportsAllDrives=true;
+        endpoint = DRIVE_API_BASE + '/files/' + encodeURIComponent(fileId) + '/export?mimeType=' + encodeURIComponent('text/csv') + '&supportsAllDrives=true';
       } else {
-        endpoint = ${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true;
+        endpoint = DRIVE_API_BASE + '/files/' + encodeURIComponent(fileId) + '?alt=media&supportsAllDrives=true';
       }
 
       const res = await composioProxyGoogle(account, endpoint, 'GET', { toolkitSlug: 'googledrive', expectBinary: true });
